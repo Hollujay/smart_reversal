@@ -1,0 +1,118 @@
+name: smartreversal
+
+services:
+  # ----------------------------------------------------------------------------
+  # Primary Database (PostgreSQL 16)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartreversal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-smartreversal_app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-development_secret_only}
+      POSTGRES_DB: ${DB_NAME:-smartreversal_db}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-smartreversal_app} -d ${DB_NAME:-smartreversal_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # Cache & Broker (Redis 7)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: smartreversal-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # Core Backend API (Go + Chi)
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: smartreversal-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      API_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-smartreversal_app}
+      DB_PASSWORD: ${DB_PASSWORD:-development_secret_only}
+      DB_NAME: ${DB_NAME:-smartreversal_db}
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-super_secret_dev_key_change_in_production_32char_minimum}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # AI & Investigation Intelligence Service (Python + FastAPI)
+  # ----------------------------------------------------------------------------
+  ai-service:
+    build:
+      context: apps/ai-service
+      dockerfile: ../../infra/docker/Dockerfile.ai
+    container_name: smartreversal-ai
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      PORT: 8000
+      HOST: 0.0.0.0
+      LOG_LEVEL: debug
+      DATABASE_URL: postgresql://${DB_USER:-smartreversal_app}:${DB_PASSWORD:-development_secret_only}@postgres:5432/${DB_NAME:-smartreversal_db}
+    ports:
+      - "${AI_SERVICE_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # Web Operations Console (React + Vite)
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: smartreversal-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
+  redis_data:
