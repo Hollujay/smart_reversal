@@ -89,6 +89,15 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/transactions", o.Services.listTransactions)
 					pr.Get("/transactions/{id}", o.Services.getTransaction)
 				}
+				if o.Services.Cases != nil {
+					pr.Get("/exceptions", o.Services.listExceptions)
+					pr.Get("/cases/{id}", o.Services.getCase)
+					pr.Patch("/cases/{id}", o.Services.patchCase)
+					pr.Post("/cases/{id}/notes", o.Services.addCaseNote)
+					pr.Post("/cases/{id}/evidence", o.Services.addCaseEvidence)
+					pr.Get("/cases/{id}/customer-status", o.Services.customerCaseStatus)
+					pr.Post("/complaints", o.Services.submitComplaint)
+				}
 				if o.Services.KillSwitch != nil {
 					pr.Get("/killswitch", o.Services.getKillSwitch)
 					pr.Post("/killswitch", o.Services.changeKillSwitch)

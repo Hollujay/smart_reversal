@@ -11,6 +11,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
@@ -34,6 +35,8 @@ type Services struct {
 	// Txn enables transaction ingestion (needs ServiceVerifier on Options) and the
 	// transaction read routes. Nil leaves them out.
 	Txn *txn.Service
+	// Cases enables the exception queue and case routes. Nil leaves them out.
+	Cases *cases.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int
