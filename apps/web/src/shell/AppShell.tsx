@@ -42,6 +42,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   const navigationItems = [
     { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+    { id: 'agent-intake', label: 'Agent Complaint Intake', roles: ['CONTACT_CENTRE_AGENT', 'BRANCH_AGENT', 'ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: 'Live' },
     { id: 'transactions', label: 'Transactions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'reconciliation', label: 'Reconciliation', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'exceptions', label: 'Exceptions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: '4' },
@@ -59,6 +60,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     SUPERVISOR_CHECKER: 'Supervisor Checker',
     AUDITOR: 'Auditor (Read-Only)',
     ADMIN: 'Platform Admin',
+    CONTACT_CENTRE_AGENT: 'Contact Centre Agent (Tier 1)',
+    BRANCH_AGENT: 'Branch Operations Agent',
   };
 
   const getBreadcrumb = () => {
@@ -173,6 +176,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               >
                 <option value="ANALYST_MAKER">Maker: Analyst</option>
                 <option value="SUPERVISOR_CHECKER">Checker: Supervisor</option>
+                <option value="CONTACT_CENTRE_AGENT">Agent: Contact Centre (Tier 1)</option>
+                <option value="BRANCH_AGENT">Agent: Branch Operations</option>
                 <option value="AUDITOR">Auditor (Read-Only)</option>
                 <option value="ADMIN">Admin: Systems</option>
               </select>
