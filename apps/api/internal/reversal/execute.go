@@ -146,7 +146,7 @@ func (s *Service) Decide(ctx context.Context, tenant uuid.UUID, checker *identit
 			return err
 		}
 		if approve {
-			if err := s.emit(ctx, tx, tenant, events.ReversalApproved, revID, nil); err != nil {
+			if err := s.emitKeyed(ctx, tx, tenant, events.ReversalApproved, revID, approvalID.String(), nil); err != nil {
 				return err
 			}
 		}
@@ -163,12 +163,19 @@ func ptr[T any](v T) *T { return &v }
 // and it consults the kill switch. A re-check that fails ends the reversal safely.
 func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Reversal, error) {
 	var out Reversal
+	expired := false
 	err := s.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
 		rev, err := s.lockReversal(ctx, tx, tenant, reversalID)
 		if err != nil {
 			return err
 		}
 		out = rev
+		if rev.ApprovalStatus == "EXPIRED" {
+			if rev.AcceptedStatus == "PENDING" || rev.AcceptedStatus == "UNKNOWN" {
+				return ErrApprovalExpired
+			}
+			return nil
+		}
 		if rev.ApprovalStatus != "NOT_REQUIRED" && rev.ApprovalStatus != "APPROVED" {
 			return fmt.Errorf("%w: approval is %s", ErrBadState, rev.ApprovalStatus)
 		}
@@ -179,9 +186,22 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 		if err != nil {
 			return err
 		}
-		actor := cases.System
-		if rev.RequestedByType == "user" && rev.ApprovalStatus == "APPROVED" {
-			actor = cases.System // the system carries out what people approved
+		actor := cases.System // the system carries out what people approved
+
+		// An approval is only authority while it is valid. This is checked before the
+		// freeze, so a lapse is recorded even while submissions are frozen, and again
+		// after an unfreeze, because the check is made here and not when it was given.
+		if rev.ApprovalStatus == "APPROVED" {
+			if ok, why, err := s.approvalStillValid(ctx, tx, tenant, rev); err != nil {
+				return err
+			} else if !ok {
+				if err := s.expireApproval(ctx, tx, tenant, rev, sub, actor, why); err != nil {
+					return err
+				}
+				expired = true
+				out, err = s.Get(ctx, tx, tenant, rev.ID.String())
+				return err
+			}
 		}
 
 		// Last look before money would move. A freeze parks the reversal: it keeps
@@ -263,6 +283,9 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 		out, err = s.Get(ctx, tx, tenant, rev.ID.String())
 		return err
 	})
+	if err == nil && expired {
+		return out, ErrApprovalExpired // the lapse itself was committed above
+	}
 	return out, err
 }
 

@@ -2,6 +2,7 @@ package reversal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -59,8 +60,15 @@ func (s *Service) AutoReverse(ctx context.Context, tenant, caseID uuid.UUID) (Au
 		res.Outcome = "held"
 		return res, nil
 	}
+	if rev.ApprovalStatus == "EXPIRED" {
+		res.Outcome = "approval_expired"
+		return res, nil
+	}
 
-	if rev, err = s.Execute(ctx, tenant, rev.ID); err != nil {
+	if rev, err = s.Execute(ctx, tenant, rev.ID); errors.Is(err, ErrApprovalExpired) {
+		res.Reversal, res.Outcome = &rev, "approval_expired"
+		return res, nil
+	} else if err != nil {
 		return res, err
 	}
 	if rev, err = s.Advance(ctx, tenant, rev.ID); err != nil {
@@ -96,6 +104,10 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 		id    uuid.UUID
 		rail  string
 		class string
+	}
+	// A lapsed approval is recorded first, whether or not anything is frozen.
+	if _, err := s.ExpireDue(ctx, tenant); err != nil {
+		return nil, fmt.Errorf("reversal: expire approvals: %w", err)
 	}
 	var candidates, waiting []item
 	var inflight []uuid.UUID
@@ -170,7 +182,9 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 			heldWaiting++
 			continue
 		}
-		if _, err := s.Execute(ctx, tenant, w.id); err != nil {
+		if _, err := s.Execute(ctx, tenant, w.id); errors.Is(err, ErrApprovalExpired) {
+			continue // recorded; it waits for a fresh approval
+		} else if err != nil {
 			return out, fmt.Errorf("reversal: submit %s: %w", w.id, err)
 		}
 		inflight = append(inflight, w.id) // verify it straight away

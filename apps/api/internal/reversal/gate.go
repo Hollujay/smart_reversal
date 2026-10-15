@@ -157,6 +157,12 @@ func (s *Service) policy(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rail,
 // execution is true when re-checking just before submission, when the question
 // of who asked has already been settled.
 func (s *Service) evaluate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, sub subject, who Requester, key string, execution bool) (Gate, error) {
+	return s.evaluateOwn(ctx, tx, tenant, sub, who, key, execution, uuid.Nil)
+}
+
+// evaluateOwn is evaluate for a reversal that already exists and is being renewed:
+// that reversal's own remediation lock is not counted against it in check 5.
+func (s *Service) evaluateOwn(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, sub subject, who Requester, key string, execution bool, own uuid.UUID) (Gate, error) {
 	now := s.now()
 	g := Gate{EvaluatedAt: now.Format(time.RFC3339)}
 	pol, err := s.policy(ctx, tx, tenant, sub.Txn.Rail, sub.Case.Classification, now)
@@ -238,7 +244,7 @@ func (s *Service) evaluate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, sub
 	// 5. No remediation already exists for this debit.
 	var live string
 	lerr := tx.QueryRow(ctx, `SELECT reversal_ref FROM reversals WHERE tenant_id = $1 AND txn_id = $2
-		AND approval_status <> 'REJECTED' AND accepted_status <> 'REJECTED' AND financial_status <> 'FAILED'`, tenant, t.ID).Scan(&live)
+		AND approval_status <> 'REJECTED' AND accepted_status <> 'REJECTED' AND financial_status <> 'FAILED' AND id <> $3`, tenant, t.ID, own).Scan(&live)
 	switch {
 	case lerr == nil && !execution:
 		add(5, false, "reversal "+live+" already exists for this transaction")

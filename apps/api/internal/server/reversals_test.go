@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,8 @@ import (
 
 type revRig struct {
 	*caseRig
-	cfg *configsvc.Service
+	cfg    *configsvc.Service
+	revSvc *reversal.Service
 }
 
 func newRevRig(t *testing.T) *revRig {
@@ -47,10 +49,10 @@ func newRevRig(t *testing.T) *revRig {
 		SoD:    authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
 		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}
 	logger, _ := quietLogger()
-	rg := &revRig{cfg: cfg, caseRig: &caseRig{ing: ing, det: &detect.Detector{Cases: cs, Config: cfg},
+	rg := &revRig{cfg: cfg, revSvc: rev, caseRig: &caseRig{ing: ing, det: &detect.Detector{Cases: cs, Config: cfg},
 		auditRig: &auditRig{pool: pool, signer: signer, tenant: dbtest.Tenant(t, pool), appender: app,
 			handler: NewRouter(Options{Logger: logger, Verifier: identity.NewVerifier(ks, nil),
-				Services: &Services{Pool: pool, Policy: policy, Audit: app, Txn: ing, Cases: cs, Config: cfg, Reversal: rev}})}}}
+				Services: &Services{Pool: pool, Policy: policy, Audit: app, Txn: ing, Cases: cs, Config: cfg, Reversal: rev, KillSwitch: &killswitch.Service{Audit: app}}})}}}
 	for k, v := range map[string]int{
 		"duplicate.window_seconds": 30, "status_query.freshness_seconds": 120, "waiting_threshold_seconds.NIP": 300,
 		"approval.auto_limit_minor": 5_000_000, "reversal.simulated_execution_enabled": 1,
@@ -283,5 +285,102 @@ func TestAMissingApprovalPolicyIsReportedAsItsOwnError(t *testing.T) {
 	writeReversalError(rec, httptest.NewRequest("POST", "/v1/approvals/x/decision", nil), reversal.ErrNoApprovalPolicy)
 	if rec.Code != http.StatusConflict || decode(t, rec.Body.Bytes())["error"] != "APPROVAL_POLICY_MISSING" {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func (r *revRig) lapse(t *testing.T, revID string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE approvals SET expires_at = now() - interval '1 second' WHERE tenant_id = $1 AND reversal_id = $2::uuid`, r.tenant, revID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnApprovalThatLapsesWhileFrozenNeedsAFreshOneThroughTheAPI(t *testing.T) {
+	r := newRevRig(t)
+	_, c := r.failed(t, "REF-H5")
+	r.confirm(t, "REF-H5")
+	officer := r.mfa(t, uuid.New(), "REVERSAL_OFFICER")
+	supervisor := r.mfa(t, uuid.New(), "SUPERVISOR")
+	code, out := r.call("POST", "/v1/reversals", officer, `{"case_id":"`+c.ID.String()+`","reason_code":"CONFIRMED_FAILED_CREDIT"}`, "Idempotency-Key", "k-ex")
+	if code != 202 {
+		t.Fatalf("%d %s", code, out)
+	}
+	rev := decode(t, out)
+	id, firstApproval := rev["id"].(string), rev["approval_id"].(string)
+
+	// While a fresh approval is already waiting, asking again returns the same one.
+	code, out = r.call("POST", "/v1/reversals/"+id+"/reapproval", officer, `{"reason":"early"}`)
+	if code != 202 || decode(t, out)["approval_id"] != firstApproval {
+		t.Fatalf("a waiting approval is returned unchanged: %d %s", code, out)
+	}
+
+	// Approve while submissions are frozen: the approval is given and recorded, nothing runs.
+	if code, out = r.call("POST", "/v1/killswitch", supervisor, `{"action":"freeze","scope":"global","reason":"incident drill now"}`); code != 200 {
+		t.Fatalf("freeze: %d %s", code, out)
+	}
+	code, out = r.call("POST", "/v1/approvals/"+firstApproval+"/decision", supervisor, `{"decision":"approved","reason":"ok"}`)
+	got := decode(t, out)
+	if code != 200 || got["approval_expires_at"] == nil || got["parked_at"] == nil || got["tracks"].(map[string]any)["accepted"] != "PENDING" {
+		t.Fatalf("expected an approved, parked reversal: %d %s", code, out)
+	}
+	r.lapse(t, id)
+
+	// Unfreeze (one asks, another approves), then the sweep records the lapse and submits nothing.
+	code, out = r.call("POST", "/v1/killswitch", officer, `{"action":"request_unfreeze","scope":"global","reason":"incident closed now"}`)
+	if code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	reqID := int64(decode(t, out)["pending_unfreeze"].([]any)[0].(map[string]any)["request_id"].(float64))
+	if code, out = r.call("POST", "/v1/killswitch", supervisor, fmt.Sprintf(`{"action":"approve_unfreeze","request_id":%d,"reason":"confirmed closed"}`, reqID)); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if _, err := r.revSvc.Sweep(context.Background(), r.tenant); err != nil {
+		t.Fatal(err)
+	}
+	code, out = r.call("GET", "/v1/reversals/"+id, officer, "")
+	got = decode(t, out)
+	if code != 200 || got["approval_status"] != "EXPIRED" || got["tracks"].(map[string]any)["accepted"] != "PENDING" {
+		t.Fatalf("expected an expired, unsubmitted reversal: %d %s", code, out)
+	}
+	// A decision cannot revive it.
+	if code, out = r.call("POST", "/v1/approvals/"+firstApproval+"/decision", supervisor, `{"decision":"approved","reason":"again"}`); code != 409 {
+		t.Fatalf("the old approval was decided once: %d %s", code, out)
+	}
+
+	// Renewal needs the request grant and a login.
+	if code, _ = r.call("POST", "/v1/reversals/"+id+"/reapproval", r.mfa(t, uuid.New(), "TXN_ANALYST"), `{"reason":"x"}`); code != 403 {
+		t.Fatalf("a role without the grant: %d", code)
+	}
+	if code, _ = r.call("POST", "/v1/reversals/"+id+"/reapproval", "", `{"reason":"x"}`); code != 401 {
+		t.Fatalf("unauthenticated: %d", code)
+	}
+	if code, _ = r.call("POST", "/v1/reversals/"+id+"/reapproval", officer, `{"reason":""}`); code != 422 {
+		t.Fatalf("a reason is required: %d", code)
+	}
+	code, out = r.call("POST", "/v1/reversals/"+id+"/reapproval", officer, `{"reason":"customer is still waiting"}`)
+	fresh := decode(t, out)
+	if code != 202 || fresh["approval_status"] != "PENDING" || fresh["approval_id"] == firstApproval {
+		t.Fatalf("%d %s", code, out)
+	}
+	// The person who asked cannot approve it; a different supervisor can, and it completes.
+	if code, out = r.call("POST", "/v1/approvals/"+fresh["approval_id"].(string)+"/decision", officer, `{"decision":"approved","reason":"mine"}`); code != 403 {
+		t.Fatalf("the requester must not approve: %d %s", code, out)
+	}
+	code, out = r.call("POST", "/v1/approvals/"+fresh["approval_id"].(string)+"/decision", r.mfa(t, uuid.New(), "SUPERVISOR"), `{"decision":"approved","reason":"renewed"}`)
+	done := decode(t, out)
+	if code != 200 || done["tracks"].(map[string]any)["financial"] != "VERIFIED" || done["id"] != id {
+		t.Fatalf("%d %s", code, out)
 	}
 }

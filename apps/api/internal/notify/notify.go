@@ -37,6 +37,7 @@ const (
 	TplOpsReversalVerified = "ops.reversal_verified.v1"
 	TplOpsReversalFailed   = "ops.reversal_failed.v1"
 	TplOpsHeld             = "ops.reversal_held.v1"
+	TplOpsApprovalExpired  = "ops.approval_expired.v1"
 )
 
 // Money formats minor units for people, such as "NGN 18,500.00".
@@ -83,6 +84,12 @@ func OpsExceptionOpened(caseRef, code, txnRef string, minor int64, currency stri
 func OpsAwaitingApproval(caseRef, reason string) Message {
 	return Message{Operations, StageAlert, TplOpsAwaitingApproval,
 		fmt.Sprintf("Case %s needs an approval before any reversal. Reason: %s.", caseRef, reason)}
+}
+
+// OpsApprovalExpired says an approval lapsed before the reversal was submitted.
+func OpsApprovalExpired(caseRef, reversalID, why string) Message {
+	return Message{Operations, StageAlert, TplOpsApprovalExpired,
+		fmt.Sprintf("Case %s: the approval for reversal %s is no longer valid (%s). Nothing was sent. A fresh approval is needed.", caseRef, reversalID, why)}
 }
 
 // OpsHeld says a reversal was blocked by the safety gate.
