@@ -49,7 +49,7 @@ feat(reversals): add dual-control maker-checker approval gate
 ## 4. Development Workflow
 
 ### Prerequisites
-- Go `1.24+`
+- Go `1.27.2` (the version declared in `apps/api/go.mod`)
 - Node.js `20+` & npm `10+`
 - Python `3.12+`
 - Docker & Docker Compose `v2+`

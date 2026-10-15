@@ -89,7 +89,7 @@ smartreversal/
 
 ### Built With
 
-- **Backend**: [Go (1.26+)](https://go.dev/) with [Chi](https://github.com/go-chi/chi) HTTP routing.
+- **Backend**: [Go (1.27.2)](https://go.dev/) with [Chi](https://github.com/go-chi/chi) HTTP routing.
 - **AI & Analytics**: [Python (3.13+)](https://www.python.org/) with [FastAPI](https://fastapi.tiangolo.com/), Pydantic, and Scikit-Learn.
 - **Frontend Console**: [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vitejs.dev/).
 - **Database & Cache**: [PostgreSQL 16](https://www.postgresql.org/) and [Redis 7](https://redis.io/).
@@ -103,7 +103,7 @@ smartreversal/
 
 Ensure you have the following installed on your host system:
 - **Git** (2.30+)
-- **Go** (1.22+)
+- **Go** (1.27.2)
 - **Node.js** (v20+) & **npm** (v10+)
 - **Python** (3.11+)
 - **Docker Engine** & **Docker Compose**
