@@ -48,6 +48,7 @@ func NewRouter(o Options) http.Handler {
 
 	r.Use(observability.TraceMiddleware)
 	r.Use(observability.RequestLogger(o.Logger))
+	r.Use(observability.MetricsMiddleware(observability.DefaultRegistry))
 	r.Use(recoverer(o.Logger))
 
 	service := o.Service
@@ -58,6 +59,7 @@ func NewRouter(o Options) http.Handler {
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health", h.live)
 		v1.Get("/ready", h.ready)
+		v1.Get("/metrics", observability.DefaultRegistry.Handler())
 
 		if o.Auth != nil {
 			ar := &authRoutes{auth: o.Auth, logger: o.Logger}
