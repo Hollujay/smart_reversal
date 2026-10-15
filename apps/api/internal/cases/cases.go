@@ -628,3 +628,9 @@ func CursorFor(c Case) Cursor {
 	}
 	return Cursor{Rank: rank, OpenedAt: c.OpenedAt, ID: c.ID.String()}
 }
+
+// RecordEvent adds a history entry that does not change the status. Other
+// workflows use it to leave a trace on a case.
+func (s *Service) RecordEvent(ctx context.Context, tx pgx.Tx, tenant, caseID uuid.UUID, a Actor, kind, status string, detail any) error {
+	return s.addEvent(ctx, tx, tenant, caseID, a, kind, status, status, "", detail)
+}
