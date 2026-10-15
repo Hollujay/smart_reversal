@@ -116,7 +116,9 @@ func (s *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRoles verifies that the authenticated user possesses one of the allowed roles.
+// RequireRoles verifies that the authenticated user holds one of the allowed
+// roles. No role passes implicitly: ADMIN must be listed like any other role,
+// because an implicit bypass would defeat maker-checker separation.
 func RequireRoles(allowedRoles ...Role) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +129,7 @@ func RequireRoles(allowedRoles ...Role) func(next http.Handler) http.Handler {
 			}
 
 			for _, role := range allowedRoles {
-				if claims.Role == role || claims.Role == RoleAdmin {
+				if claims.Role == role {
 					next.ServeHTTP(w, r)
 					return
 				}
