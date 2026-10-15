@@ -66,6 +66,12 @@ func Tenant(t testing.TB, p *db.Pool) uuid.UUID {
 				return err
 			}
 			for _, q := range []string{
+				`DELETE FROM sim_provider_requests WHERE tenant_id = $1`,
+				`DELETE FROM sim_provider_script WHERE tenant_id = $1`,
+				`DELETE FROM sim_ledger_entries WHERE tenant_id = $1`,
+				`DELETE FROM sim_status_script WHERE tenant_id = $1`,
+				`DELETE FROM approvals WHERE tenant_id = $1`,
+				`DELETE FROM reversals WHERE tenant_id = $1`,
 				`DELETE FROM notifications WHERE tenant_id = $1`,
 				`DELETE FROM case_evidence WHERE tenant_id = $1`,
 				`DELETE FROM case_events WHERE tenant_id = $1`,
