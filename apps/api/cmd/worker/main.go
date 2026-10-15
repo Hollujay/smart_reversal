@@ -10,7 +10,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
+	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
+	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/detect"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/redisx"
@@ -59,7 +63,12 @@ func run() error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
+	app := &audit.Appender{}
+	cfgSvc := &configsvc.Service{Audit: app}
+	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc}
+
 	return worker.Run(ctx, worker.Deps{
+		Detector:        detector,
 		Pool:            pool,
 		Redis:           rc,
 		Logger:          logger,

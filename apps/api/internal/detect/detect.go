@@ -18,6 +18,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/stream"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -327,4 +328,42 @@ func (d *Detector) SweepStuck(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) 
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// SweepAll runs SweepStuck for every institution. It reads the list of
+// institutions with the pool's own role, then does the work tenant by tenant.
+func (d *Detector) SweepAll(ctx context.Context, pool *db.Pool) (int, error) {
+	rows, err := pool.Query(ctx, `SELECT id FROM institutions ORDER BY code`)
+	if err != nil {
+		return 0, err
+	}
+	var tenants []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		tenants = append(tenants, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	opened := 0
+	for _, t := range tenants {
+		err := pool.WithTenant(ctx, t, func(tx pgx.Tx) error {
+			fs, err := d.SweepStuck(ctx, tx, t)
+			for _, f := range fs {
+				if f.Created {
+					opened++
+				}
+			}
+			return err
+		})
+		if err != nil {
+			return opened, fmt.Errorf("detect: sweep tenant %s: %w", t, err)
+		}
+	}
+	return opened, nil
 }
