@@ -1,6 +1,6 @@
 # B1 Report
 
-Date: 2026-10-15. Code: branch `feat/backend-b1-governance`, 53 commits on top of `develop` at `52391ac`. B2 has not been started.
+Date: 2026-10-15. Code: branch `feat/backend-b1-governance`, 58 commits on top of `develop` at `52391ac`. B2 has not been started.
 
 B1 was started on the project owner's instruction while decisions D5 to D10 were still open. Each was implemented as the recommendation in the register and recorded in ADR 0003. Please confirm or change them (section 8).
 
@@ -23,7 +23,7 @@ B1 was started on the project owner's instruction while decisions D5 to D10 were
 | Routing | Delegation, on-call shifts, escalation steps | migration 0012; `internal/routing` |
 | Service auth | Per-service keys, scopes, 5 minute assertions, replay protection, `requireService` middleware | migration 0013; `internal/servauth` |
 | Commands | `bootstrap` (first institution, operator, clock proposals), `keygen` (signing and vault keys) | `cmd/bootstrap`, `cmd/keygen` |
-| Contract | 14 new operations marked `implemented` in `openapi.yaml`, all checked by the contract tests | `packages/api-contracts/openapi.yaml` |
+| Contract | 13 new operations marked `implemented` (15 in total) in `openapi.yaml`, all checked by the contract tests | `packages/api-contracts/openapi.yaml` |
 | Docs | Auth and permission model, setup guide, ADR 0003, decision and risk registers, traceability | `docs/` |
 
 Removed: the in-memory HMAC `internal/auth` prototype and the in-memory `internal/audit` prototype.
