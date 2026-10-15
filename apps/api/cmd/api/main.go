@@ -20,6 +20,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
@@ -87,6 +88,16 @@ func run() error {
 		logger.Warn("account_vault_disabled", "reason", "ACCOUNT_TOKEN_KEY and ACCOUNT_ENC_KEY are not both set; the unmask route is not mounted")
 	}
 
+	configService := &configsvc.Service{Audit: appender}
+	killService := &killswitch.Service{Audit: appender}
+	txnService := &txn.Service{}
+	caseService := &cases.Service{Audit: appender, Config: configService}
+	// Execution is simulated: the sources below are the synthetic ones. No real
+	// provider adapter exists in this build.
+	reversalService := &reversal.Service{Pool: pool, Config: configService, Kill: killService, Cases: caseService, Audit: appender, Txn: txnService,
+		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
+		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}
+
 	handler := server.NewRouter(server.Options{
 		Logger:   logger,
 		Version:  version,
@@ -97,7 +108,7 @@ func run() error {
 			Signer:   signer,
 			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
-		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: &configsvc.Service{Audit: appender}, KillSwitch: &killswitch.Service{Audit: appender}, Txn: &txn.Service{}, Cases: &cases.Service{Audit: appender, Config: &configsvc.Service{Audit: appender}}},
+		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Cases: caseService, Reversal: reversalService},
 		ServiceVerifier: &servauth.Verifier{Pool: pool},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{

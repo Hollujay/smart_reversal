@@ -18,6 +18,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
@@ -37,6 +38,8 @@ type Services struct {
 	Txn *txn.Service
 	// Cases enables the exception queue and case routes. Nil leaves them out.
 	Cases *cases.Service
+	// Reversal enables the simulated reversal and approval routes (needs Cases).
+	Reversal *reversal.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int

@@ -410,16 +410,17 @@ paths:
     post:
       tags: [Reversals]
       operationId: requestReversal
-      summary: Request a reversal
+      summary: Request a reversal for a case
       description: |
-        Runs the eight-check gate. Returns 202 when all eight pass, 409 with the
-        failed checks otherwise, and 403 when the caller lacks authority. A
-        timeout means the outcome is UNKNOWN. Query status with the same key and
-        never create a new key for the same debit.
+        Runs the eight-check gate. Returns 202 when all eight pass and the request
+        is recorded (a person's request then waits for a different approver), 200
+        when the Idempotency-Key already has a reversal, and 409 `GATE_FAILED`
+        with the failed checks when a check fails, in which case nothing is
+        created. An unknown, pending or conflicting transaction outcome always
+        fails the gate. Nothing is sent to the provider by this call.
 
-        All financial execution is simulated in Track H.
-      x-status: planned
-      x-phase: B5
+        All financial execution is simulated. Responses carry `simulated: true`.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -428,15 +429,21 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ReversalRequest' }
       responses:
-        '202':
-          description: Gate passed and the request is accepted. Not a completed refund.
+        '200':
+          description: The key already had a reversal; it is returned unchanged.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReversalAccepted' }
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '202':
+          description: Gate passed and the request is recorded. Not a completed refund.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '400': { description: Missing Idempotency-Key or malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: Gate failed, or the key was reused with a different payload.
+          description: Gate failed (`GATE_FAILED`), or the key was reused for a different request (`IDEMPOTENCY_KEY_REUSED`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GateFailedError' }
@@ -446,9 +453,8 @@ paths:
       tags: [Reversals]
       operationId: getReversal
       summary: Reversal status
-      description: Returns the accepted, processing and financial tracks separately.
-      x-status: planned
-      x-phase: B5
+      description: Returns the accepted, processing and financial tracks separately. `id` may be the reversal reference.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
@@ -456,33 +462,108 @@ paths:
           description: Current status.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReversalStatus' }
+              schema: { $ref: '#/components/schemas/Reversal' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-
+  /v1/reversals/{id}/advance:
+    post:
+      tags: [Reversals]
+      operationId: advanceReversal
+      summary: Ask the provider where a submitted reversal stands and verify it
+      description: |
+        Polls the (simulated) provider. When it reports done, the backend checks
+        the ledger independently. Only then does the financial track become
+        VERIFIED and the case resolve. Safe to repeat.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: Current status after the poll.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/cases/{id}/reversal-eligibility:
+    get:
+      tags: [Reversals]
+      operationId: getReversalEligibility
+      summary: The eight checks for a case as they stand now
+      description: Read-only. Verdict is PASS_AUTO, PASS_NEEDS_APPROVAL or BLOCKED.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: The gate result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/approvals:
+    get:
+      tags: [Reversals]
+      operationId: listApprovals
+      summary: The approval queue
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [PENDING, APPROVED, REJECTED], default: PENDING } }
+      responses:
+        '200':
+          description: Approvals with their reversals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+        '400': { description: Bad status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /v1/approvals/{id}/decision:
     post:
       tags: [Reversals]
       operationId: decideApproval
-      summary: Approve or reject
-      description: The maker cannot decide. A reason is mandatory on rejection.
-      x-status: planned
-      x-phase: B5
+      summary: Approve or reject a reversal
+      description: |
+        Needs the approve_reversal grant within the caller's limit and an
+        MFA-backed token. The requester cannot approve (`SELF_APPROVAL`), nor
+        someone linked to the accounts (`CONFLICT_OF_INTEREST`). A reason is
+        mandatory on rejection. Approving carries the reversal out against the
+        simulated provider and verifies it against the ledger before returning.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                reason: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The reversal after the decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/audit:
     get:
@@ -910,7 +991,9 @@ components:
                 required: [id, detail]
                 properties:
                   id: { type: integer, minimum: 1, maximum: 8 }
+                  name: { type: string }
                   detail: { type: string }
+            gate: { $ref: '#/components/schemas/Gate' }
     Health:
       type: object
       required: [status, service, version]
@@ -1321,15 +1404,10 @@ components:
         source_ts: { type: string, format: date-time }
     ReversalRequest:
       type: object
-      required: [txn_id, case_id, reason_code, evidence_ids]
+      required: [case_id, reason_code]
       properties:
-        txn_id: { type: string, example: TXN-0001842 }
-        case_id: { type: string, example: CASE-2026-004417 }
-        reason_code: { type: string, example: DEBIT_NO_CREDIT_CONFIRMED_FAILED }
-        evidence_ids:
-          type: array
-          minItems: 1
-          items: { type: string }
+        case_id: { type: string, description: Case id or reference, example: CASE-2026-000012 }
+        reason_code: { type: string, example: CONFIRMED_FAILED_CREDIT }
     ReversalTracks:
       type: object
       required: [accepted, processing, financial]
@@ -1337,26 +1415,57 @@ components:
         Three separate tracks. An acknowledgement is not proof of posting.
         `financial` becomes VERIFIED only after the ledger confirms the posting.
       properties:
-        accepted: { type: string, example: PENDING }
-        processing: { type: string, example: NOT_STARTED }
-        financial: { type: string, example: UNVERIFIED }
-    ReversalAccepted:
+        accepted: { type: string }
+        processing: { type: string }
+        financial: { type: string }
+    GateCheck:
       type: object
-      required: [reversal_id, gate, tracks, simulated]
       properties:
-        reversal_id: { type: string, example: RV-000921 }
-        gate:
-          type: object
-          required: [checks_passed, policy_version]
-          properties:
-            checks_passed: { type: integer, enum: [8] }
-            policy_version: { type: string, example: P-NIPREV-3.2 }
+        id: { type: integer, minimum: 1, maximum: 8 }
+        name: { type: string }
+        passed: { type: boolean }
+        detail: { type: string }
+    Gate:
+      type: object
+      required: [verdict, checks]
+      properties:
+        verdict: { type: string, enum: [PASS_AUTO, PASS_NEEDS_APPROVAL, BLOCKED] }
+        checks: { type: array, items: { $ref: '#/components/schemas/GateCheck' } }
+        approval_reason: { type: string }
+        policy_version: { type: string }
+        evaluated_at: { type: string }
+        status_outcome: { type: string }
+        status_evidence: { type: string }
+    Reversal:
+      type: object
+      required: [id, reversal_ref, case_id, txn_id, amount_minor, currency, approval_status, tracks, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        reversal_ref: { type: string }
+        case_id: { type: string, format: uuid }
+        txn_id: { type: string, format: uuid }
+        amount_minor: { type: string, description: Decimal string of minor units. }
+        currency: { type: string }
+        reason_code: { type: string }
+        requested_by_type: { type: string, enum: [user, system] }
+        approval_status: { type: string }
+        approval_id: { type: string, format: uuid }
         tracks: { $ref: '#/components/schemas/ReversalTracks' }
+        gate: { $ref: '#/components/schemas/Gate' }
+        provider_ref: { type: string }
+        failure_reason: { type: string }
+        submitted_at: { type: string, format: date-time }
+        posted_at: { type: string, format: date-time }
+        verified_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
         simulated: { type: boolean }
-    ReversalStatus:
+    Approval:
       type: object
-      required: [reversal_id, tracks, simulated]
       properties:
-        reversal_id: { type: string }
-        tracks: { $ref: '#/components/schemas/ReversalTracks' }
+        approval_id: { type: string, format: uuid }
+        status: { type: string }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        case_ref: { type: string }
+        reversal: { $ref: '#/components/schemas/Reversal' }
         simulated: { type: boolean }
