@@ -544,6 +544,115 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/reversals/{id}/override-proposal:
+    post:
+      tags: [Reversals]
+      operationId: proposeGateOverride
+      summary: Propose a dual-control gate override for a blocked reversal
+      description: |
+        Allows a supervisor or head of ops to propose overriding a blocked safety
+        gate with justification. Requires a second distinct approver with MFA.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [justification]
+              properties:
+                justification: { type: string, minLength: 10 }
+      responses:
+        '201':
+          description: Override proposed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  reversal_id: { type: string, format: uuid }
+                  proposer_id: { type: string, format: uuid }
+                  justification: { type: string }
+                  status: { type: string }
+                  created_at: { type: string, format: date-time }
+        '400': { description: Malformed body. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/reversals/overrides/{id}/decision:
+    post:
+      tags: [Reversals]
+      operationId: decideGateOverride
+      summary: Decide a dual-control gate override
+      description: |
+        Second approver reviews and approves or rejects the proposed gate override.
+        Requires override_gate capability, MFA, and cannot be the proposer.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approve]
+              properties:
+                approve: { type: boolean }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Override decision recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  reversal_id: { type: string, format: uuid }
+                  status: { type: string }
+                  decision_reason: { type: string }
+        '400': { description: Malformed body. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/reversals/recover-timeouts:
+    post:
+      tags: [Reversals]
+      operationId: recoverTimeouts
+      summary: Scan and recover execution timeouts with automated polling and sub-cases
+      description: |
+        Polls payment switch status for indeterminate reversals. If indeterminate after
+        multiple attempts, automatically opens a manual recovery subcase.
+      x-status: implemented
+      responses:
+        '200':
+          description: Timeout recovery results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  processed_count: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reversal_id: { type: string, format: uuid }
+                        outcome: { type: string }
+                        detail: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/cases/{id}/reversal-eligibility:
     get:
       tags: [Reversals]
