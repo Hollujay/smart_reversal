@@ -2,7 +2,7 @@
 // environment. The password is read from BOOTSTRAP_PASSWORD, never from an
 // argument, so it does not appear in the process list or shell history.
 //
-//	BOOTSTRAP_PASSWORD='...' bootstrap -institution DEMO-BANK -email ops@example.test -roles ADMIN
+//	BOOTSTRAP_PASSWORD='...' bootstrap -institution DEMO-BANK -email ops@example.test -roles ADMIN_INTEGRATION
 package main
 
 import (
@@ -31,7 +31,7 @@ func run() error {
 	instName := flag.String("institution-name", "", "institution display name (default: the code)")
 	email := flag.String("email", "", "operator email")
 	name := flag.String("name", "", "operator display name (default: the email)")
-	roles := flag.String("roles", "", "comma-separated roles, for example ADMIN or REVERSAL_OFFICER,AUDITOR")
+	roles := flag.String("roles", "", "comma-separated roles, for example ADMIN_INTEGRATION or REVERSAL_OFFICER,SUPERVISOR")
 	flag.Parse()
 
 	password := os.Getenv("BOOTSTRAP_PASSWORD")

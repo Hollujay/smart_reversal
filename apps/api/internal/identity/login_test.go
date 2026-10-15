@@ -64,7 +64,7 @@ func (r *loginRig) state(t *testing.T, id uuid.UUID) (attempts int, locked *time
 
 func TestLoginSuccessIssuesAVerifiableOperatorToken(t *testing.T) {
 	r := newLoginRig(t)
-	id := r.addUser(t, "Officer@Example.Test", "REVERSAL_OFFICER", "AUDITOR")
+	id := r.addUser(t, "Officer@Example.Test", "REVERSAL_OFFICER", "TXN_ANALYST")
 
 	res, err := r.auth.Login(context.Background(), r.code, "  officer@EXAMPLE.test ", goodPassword)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestLoginSuccessIssuesAVerifiableOperatorToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issued token does not verify: %v", err)
 	}
-	if p.UserID != id || p.TenantID != r.tenant || !p.HasRole("REVERSAL_OFFICER") || !p.HasRole("AUDITOR") || p.MFA {
+	if p.UserID != id || p.TenantID != r.tenant || !p.HasRole("REVERSAL_OFFICER") || !p.HasRole("TXN_ANALYST") || p.MFA {
 		t.Fatalf("unexpected principal: %+v", p)
 	}
 	if _, err := r.verify.Verify(res.Token, AudienceCustomer); err == nil {
@@ -84,8 +84,8 @@ func TestLoginSuccessIssuesAVerifiableOperatorToken(t *testing.T) {
 
 func TestEveryFailureLooksTheSame(t *testing.T) {
 	r := newLoginRig(t)
-	r.addUser(t, "real@example.test", "AUDITOR")
-	disabled := r.addUser(t, "off@example.test", "AUDITOR")
+	r.addUser(t, "real@example.test", "TXN_ANALYST")
+	disabled := r.addUser(t, "off@example.test", "TXN_ANALYST")
 	if _, err := r.pool.Exec(context.Background(), `UPDATE users SET status = 'disabled' WHERE id = $1`, disabled); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestEveryFailureLooksTheSame(t *testing.T) {
 
 func TestLockoutAfterRepeatedFailuresAndRecovery(t *testing.T) {
 	r := newLoginRig(t)
-	id := r.addUser(t, "lock@example.test", "AUDITOR")
+	id := r.addUser(t, "lock@example.test", "TXN_ANALYST")
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -148,7 +148,7 @@ func TestLockoutAfterRepeatedFailuresAndRecovery(t *testing.T) {
 
 func TestSuccessResetsPartialFailures(t *testing.T) {
 	r := newLoginRig(t)
-	id := r.addUser(t, "reset@example.test", "AUDITOR")
+	id := r.addUser(t, "reset@example.test", "TXN_ANALYST")
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
 		_, _ = r.auth.Login(ctx, r.code, "reset@example.test", "wrong password here")
@@ -167,7 +167,7 @@ func TestSuccessResetsPartialFailures(t *testing.T) {
 func TestConcurrentFailuresAreAllCounted(t *testing.T) {
 	r := newLoginRig(t)
 	r.auth.MaxAttempts = 1000
-	id := r.addUser(t, "race@example.test", "AUDITOR")
+	id := r.addUser(t, "race@example.test", "TXN_ANALYST")
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
@@ -184,7 +184,7 @@ func TestConcurrentFailuresAreAllCounted(t *testing.T) {
 
 func TestAUserCannotLogInThroughAnotherInstitution(t *testing.T) {
 	r := newLoginRig(t)
-	r.addUser(t, "only-in-a@example.test", "AUDITOR")
+	r.addUser(t, "only-in-a@example.test", "TXN_ANALYST")
 	other := dbtest.Tenant(t, r.pool)
 	var otherCode string
 	if err := r.pool.QueryRow(context.Background(), `SELECT code FROM institutions WHERE id = $1`, other).Scan(&otherCode); err != nil {
@@ -197,7 +197,7 @@ func TestAUserCannotLogInThroughAnotherInstitution(t *testing.T) {
 
 func TestOldPasswordHashIsUpgradedOnLogin(t *testing.T) {
 	r := newLoginRig(t)
-	id := r.addUser(t, "old@example.test", "AUDITOR")
+	id := r.addUser(t, "old@example.test", "TXN_ANALYST")
 	weak := encodeHash(8*1024, 1, 1, []byte("0123456789abcdef"), argon2Key(goodPassword, []byte("0123456789abcdef"), 1, 8*1024, 1))
 	if _, err := r.pool.Exec(context.Background(), `UPDATE users SET password_hash = $2 WHERE id = $1`, id, weak); err != nil {
 		t.Fatal(err)
@@ -218,13 +218,13 @@ func TestOldPasswordHashIsUpgradedOnLogin(t *testing.T) {
 func TestCreateValidates(t *testing.T) {
 	r := newLoginRig(t)
 	ctx := context.Background()
-	if _, err := r.store.Create(ctx, r.tenant, "a@example.test", "A", "short", []string{"AUDITOR"}); !errors.Is(err, ErrPasswordPolicy) {
+	if _, err := r.store.Create(ctx, r.tenant, "a@example.test", "A", "short", []string{"TXN_ANALYST"}); !errors.Is(err, ErrPasswordPolicy) {
 		t.Errorf("short password: %v", err)
 	}
 	if _, err := r.store.Create(ctx, r.tenant, "a@example.test", "A", goodPassword, []string{"bad role"}); err == nil {
 		t.Error("bad role accepted")
 	}
-	r.addUser(t, "dup@example.test", "AUDITOR")
+	r.addUser(t, "dup@example.test", "TXN_ANALYST")
 	if _, err := r.store.Create(ctx, r.tenant, "DUP@example.test", "A", goodPassword, nil); err == nil {
 		t.Error("duplicate email (different case) accepted")
 	}
@@ -250,19 +250,19 @@ func TestBootstrapCreatesInstitutionAndOperatorThatCanLogIn(t *testing.T) {
 	})
 
 	tenant, user, err := Bootstrap(ctx, r.pool, BootstrapSpec{
-		InstitutionCode: code, Email: "first@example.test", Password: goodPassword, Roles: []string{"ADMIN"},
+		InstitutionCode: code, Email: "first@example.test", Password: goodPassword, Roles: []string{"ADMIN_INTEGRATION"},
 	})
 	if err != nil || tenant == uuid.Nil || user == uuid.Nil {
 		t.Fatalf("bootstrap: %v %v %v", tenant, user, err)
 	}
 	res, err := r.auth.Login(ctx, code, "first@example.test", goodPassword)
-	if err != nil || !contains(res.Roles, "ADMIN") {
+	if err != nil || !contains(res.Roles, "ADMIN_INTEGRATION") {
 		t.Fatalf("bootstrapped operator cannot log in: %v %+v", err, res)
 	}
 
 	// A second operator in the same institution reuses it.
 	tenant2, _, err := Bootstrap(ctx, r.pool, BootstrapSpec{
-		InstitutionCode: code, Email: "second@example.test", Password: goodPassword, Roles: []string{"AUDITOR"},
+		InstitutionCode: code, Email: "second@example.test", Password: goodPassword, Roles: []string{"TXN_ANALYST"},
 	})
 	if err != nil || tenant2 != tenant {
 		t.Fatalf("second bootstrap: tenant %v (want %v) err %v", tenant2, tenant, err)
