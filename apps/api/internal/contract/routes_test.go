@@ -1,0 +1,93 @@
+package contract
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"sort"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/server"
+)
+
+// routerOperations lists "METHOD /path" for every route the real router serves.
+func routerOperations(t *testing.T) map[string]bool {
+	t.Helper()
+	h := server.NewRouter(server.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	routes, ok := h.(chi.Routes)
+	if !ok {
+		t.Fatal("router does not expose its routes")
+	}
+	got := map[string]bool{}
+	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		got[method+" "+route] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func specOperations(t *testing.T, status string) map[string]bool {
+	t.Helper()
+	got := map[string]bool{}
+	for path, item := range loadSpec(t).Paths.Map() {
+		for method, op := range item.Operations() {
+			if s, _ := op.Extensions["x-status"].(string); s == status {
+				got[method+" "+path] = true
+			}
+		}
+	}
+	return got
+}
+
+func diff(a, b map[string]bool) []string {
+	var out []string
+	for k := range a {
+		if !b[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// A route that is served but not documented is an undeclared contract.
+func TestEveryServedRouteIsInTheSpecAsImplemented(t *testing.T) {
+	if missing := diff(routerOperations(t), specOperations(t, "implemented")); len(missing) > 0 {
+		t.Errorf("routes served but not marked implemented in openapi.yaml: %v", missing)
+	}
+}
+
+// An operation marked implemented must exist, or clients are told something false.
+func TestEveryImplementedOperationIsServed(t *testing.T) {
+	if missing := diff(specOperations(t, "implemented"), routerOperations(t)); len(missing) > 0 {
+		t.Errorf("operations marked implemented in openapi.yaml but not served: %v", missing)
+	}
+}
+
+// A planned operation that is already served should be promoted.
+func TestNoPlannedOperationIsAlreadyServed(t *testing.T) {
+	served := routerOperations(t)
+	for _, op := range diff(specOperations(t, "planned"), map[string]bool{}) {
+		if served[op] {
+			t.Errorf("%s is served but still marked planned", op)
+		}
+	}
+}
+
+// Guards against the comparisons above passing because both sides are empty.
+func TestRouteDiscoveryFindsKnownRoutes(t *testing.T) {
+	served := routerOperations(t)
+	for _, want := range []string{"GET /v1/health", "GET /v1/ready"} {
+		if !served[want] {
+			t.Errorf("route discovery did not find %s; found %v", want, served)
+		}
+	}
+	if !specOperations(t, "implemented")["GET /v1/health"] {
+		t.Error("spec discovery did not find GET /v1/health")
+	}
+}
