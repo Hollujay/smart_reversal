@@ -24,7 +24,7 @@ Events about cases, reversals and notifications, written to the transactional ou
 | `reversal.failed` | `reversals` | Provider rejection, ledger mismatch, or stopped before submission | reversal id | reversal fields, failure_code |
 | `notification.recorded` | `notifications` | A new notification was stored. Not for a deduplicated one | notification id | notification_id, case_id, audience, stage, template_id |
 
-Reversal fields: reversal_id, reversal_ref, case_id, txn_id, amount_minor (decimal string), currency, approval_status, accepted_status, processing_status, financial_status, requested_by_type.
+Reversal fields: reversal_id, reversal_ref, case_id, txn_id, amount_minor (decimal string), currency, approval_status, accepted_status, processing_status, financial_status, requested_by_type, policy_id.
 
 `failure_code` values: `PROVIDER_REJECTED`, `LEDGER_MISMATCH`, `STOPPED_BEFORE_SUBMISSION`.
 

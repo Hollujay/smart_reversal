@@ -48,6 +48,7 @@ var Policies = map[string]int{
 	"approval.auto_limit_minor":             5_000_000,
 	"reversal.auto_eligible.FAIL001":        1,
 	"reversal.simulated_execution_enabled":  1,
+	"approval.validity_seconds":             3600, // approvals last an hour in the demonstration
 	"approval.limit_minor.SUPERVISOR":       100_000_000,
 	"approval.limit_minor.REVERSAL_OFFICER": 5_000_000,
 }

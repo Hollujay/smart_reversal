@@ -91,6 +91,7 @@ var covering = map[string]struct {
 	"global":         {killswitch.ScopeGlobal, ""},
 	"rail":           {killswitch.ScopeRail, "NIP"},
 	"exception type": {killswitch.ScopeExceptionType, "FAIL001"},
+	"policy":         {killswitch.ScopePolicy, "reversal.FAIL001.NIP"},
 }
 
 var notCovering = map[string]struct {
@@ -99,6 +100,9 @@ var notCovering = map[string]struct {
 }{
 	"another rail":           {killswitch.ScopeRail, "CARD"},
 	"another exception type": {killswitch.ScopeExceptionType, "DUP001"},
+	"another rail's policy":  {killswitch.ScopePolicy, "reversal.FAIL001.CARD"},
+	"another type's policy":  {killswitch.ScopePolicy, "reversal.DUP001.NIP"},
+	"a detector rule":        {killswitch.ScopePolicy, "DET-FAIL-1"},
 }
 
 func TestAFreezeAfterApprovalParksTheReversalAndItIsSubmittedOnceAfterAnAuthorisedUnfreeze(t *testing.T) {
@@ -334,5 +338,29 @@ func TestSafetyAlertsAreStillRecordedAndNotRepeatedDuringAFreeze(t *testing.T) {
 	}
 	if held != 1 {
 		t.Fatalf("expected one held alert (deduplicated), got %d in %+v", held, ops)
+	}
+}
+
+func TestAMissingPolicyIdentityNeverSlipsPastAPolicyFreeze(t *testing.T) {
+	st := killswitch.State{Frozen: []killswitch.Frozen{{Target: killswitch.Target{Scope: killswitch.ScopePolicy, Value: "reversal.FAIL001.NIP"}}}}
+	for name, a := range map[string]killswitch.Action{
+		"no exception code": actionFor("", "NIP"),
+		"no rail":           actionFor("FAIL001", ""),
+		"neither":           actionFor("", ""),
+	} {
+		if !a.PolicyUnknown || a.PolicyID != "" {
+			t.Errorf("%s: the identity should be reported unknown: %+v", name, a)
+		}
+		if st.Covers(a) == nil {
+			t.Errorf("%s: an unidentified policy slipped past a policy freeze", name)
+		}
+	}
+	if a := actionFor("FAIL001", "NIP"); a.PolicyUnknown || a.PolicyID != "reversal.FAIL001.NIP" || st.Covers(a) == nil {
+		t.Fatalf("a known policy should match its own freeze: %+v", a)
+	}
+	// Unknown identity is not covered by freezes that are not about policy.
+	rail := killswitch.State{Frozen: []killswitch.Frozen{{Target: killswitch.Target{Scope: killswitch.ScopeRail, Value: "CARD"}}}}
+	if rail.Covers(actionFor("", "NIP")) != nil {
+		t.Fatal("a rail freeze on another rail covered the action")
 	}
 }

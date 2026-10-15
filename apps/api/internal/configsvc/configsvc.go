@@ -56,6 +56,7 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^status_query\.freshness_seconds$`), 1, 86400, "seconds", "How old a status answer may be and still count as fresh evidence", false},
 	{regexp.MustCompile(`^waiting_threshold_seconds\.[A-Z0-9_]{2,30}$`), 0, 7 * 86400, "seconds", "How long to wait on a rail before a reversal may be considered", false},
 	{regexp.MustCompile(`^approval\.auto_limit_minor$`), 0, 1 << 52, "minor units", "Largest amount that may be reversed without a human approval", false},
+	{regexp.MustCompile(`^approval\.validity_seconds$`), 60, 30 * 86400, "seconds", "How long a reversal approval stays valid before it must be renewed", false},
 	{regexp.MustCompile(`^approval\.limit_minor\.[A-Z_]{3,40}$`), 0, 1 << 52, "minor units", "Largest amount a role may approve", false},
 	{regexp.MustCompile(`^sla\.pause_max_hours$`), 0, 24 * 30, "hours", "Longest an SLA clock may stay paused without supervisor re-approval", false},
 	{regexp.MustCompile(`^calendar\.holiday\.[0-9]{4}-[0-9]{2}-[0-9]{2}$`), 0, 1, "flag", "1 marks a public holiday on that date, 0 marks a working day that would otherwise be off", false},

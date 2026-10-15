@@ -31,7 +31,10 @@ var (
 	ErrKeyReuse   = errors.New("reversal: that idempotency key was used for a different request")
 	ErrBadState   = errors.New("reversal: not in a state that allows this")
 	ErrNotPending = errors.New("reversal: this approval was already decided")
-	ErrSameActor  = authz.ErrSameActor
+	// ErrNoApprovalPolicy means no approved approval.validity_seconds exists, so an
+	// approval cannot be given: without a validity period it would never expire.
+	ErrNoApprovalPolicy = errors.New("reversal: no approved approval validity period, so nothing can be approved")
+	ErrSameActor        = authz.ErrSameActor
 )
 
 // Service runs reversals.
@@ -84,18 +87,29 @@ type Reversal struct {
 	Version          int        `json:"version"`
 	// ParkedAt is set while a freeze holds back submission of an approved reversal.
 	ParkedAt *time.Time `json:"parked_at,omitempty"`
+	// PolicyID names the policy that governed the decision and does not change.
+	// PolicyVersion is the versions of the configuration in force when the
+	// reversal was decided, and is never rewritten.
+	PolicyID      string `json:"policy_id"`
+	PolicyVersion string `json:"policy_version"`
+	// ApprovalExpiresAt is when the newest approval stops being valid.
+	ApprovalExpiresAt *time.Time `json:"approval_expires_at,omitempty"`
 }
+
+// PolicyID is the stable identity of the policy that governs reversals of one
+// exception type on one rail. A policy-scope kill switch freeze targets it.
+func PolicyID(code, rail string) string { return "reversal." + code + "." + rail }
 
 const reversalColumns = `r.id, r.reversal_ref, r.case_id, r.txn_id, r.idempotency_key, coalesce(r.requested_by::text, ''), r.requested_by_type,
 	r.amount_minor, r.currency, r.reason_code, r.approval_status, r.accepted_status, r.processing_status, r.financial_status, r.gate_result,
-	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version, r.parked_at`
+	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version, r.parked_at, r.policy_id, r.policy_version, a.expires_at`
 
 func scanReversal(row pgx.Row) (Reversal, error) {
 	var r Reversal
 	var gate []byte
 	if err := row.Scan(&r.ID, &r.Ref, &r.CaseID, &r.TxnID, &r.IdempotencyKey, &r.RequestedBy, &r.RequestedByType, &r.AmountMinor, &r.Currency,
 		&r.ReasonCode, &r.ApprovalStatus, &r.AcceptedStatus, &r.ProcessingStatus, &r.FinancialStatus, &gate, &r.ProviderRef, &r.FailureReason,
-		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version, &r.ParkedAt); err != nil {
+		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version, &r.ParkedAt, &r.PolicyID, &r.PolicyVersion, &r.ApprovalExpiresAt); err != nil {
 		return r, err
 	}
 	_ = json.Unmarshal(gate, &r.Gate)
@@ -103,7 +117,9 @@ func scanReversal(row pgx.Row) (Reversal, error) {
 	return r, nil
 }
 
-const reversalFrom = ` FROM reversals r LEFT JOIN approvals a ON a.tenant_id = r.tenant_id AND a.reversal_id = r.id`
+// A reversal may have had several approvals; the newest is the one that counts.
+const reversalFrom = ` FROM reversals r LEFT JOIN LATERAL (SELECT id, expires_at FROM approvals WHERE tenant_id = r.tenant_id AND reversal_id = r.id
+	ORDER BY created_at DESC, id DESC LIMIT 1) a ON true`
 
 // Get loads a reversal by id or reference.
 func (s *Service) Get(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, idOrRef string) (Reversal, error) {
@@ -241,10 +257,10 @@ func (s *Service) Request(ctx context.Context, tenant uuid.UUID, in RequestInput
 		ref := fmt.Sprintf("RV-%06d", seq)
 		id := uuid.New()
 		_, err = tx.Exec(ctx, `INSERT INTO reversals (tenant_id, id, reversal_ref, case_id, txn_id, idempotency_key, request_hash, requested_by, requested_by_type,
-				amount_minor, currency, reason_code, approval_status, gate_result, policy_version)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+				amount_minor, currency, reason_code, approval_status, gate_result, policy_version, policy_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 			tenant, id, ref, in.CaseID, sub.Txn.ID, in.IdempotencyKey, hash, actorID, actorType, sub.Txn.Amount, sub.Txn.Currency,
-			strings.TrimSpace(in.ReasonCode), approval, gate.json(), gate.PolicyVersion)
+			strings.TrimSpace(in.ReasonCode), approval, gate.json(), gate.PolicyVersion, PolicyID(sub.Case.Classification, sub.Txn.Rail))
 		if err != nil {
 			var pg *pgconn.PgError
 			if errors.As(err, &pg) && pg.Code == "23505" && strings.Contains(pg.ConstraintName, "one_live") {
@@ -293,6 +309,17 @@ func (s *Service) event(ctx context.Context, tx pgx.Tx, tenant, caseID uuid.UUID
 }
 
 func (s *Service) auditEvent(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, a cases.Actor, action, ref, policy string, details map[string]any) error {
+	// Every audit record about a reversal names the policy that governed it.
+	if strings.HasPrefix(ref, "RV-") {
+		var id string
+		if err := tx.QueryRow(ctx, `SELECT policy_id FROM reversals WHERE tenant_id = $1 AND reversal_ref = $2`, tenant, ref).Scan(&id); err == nil && id != "" {
+			d := map[string]any{"policy_id": id}
+			for k, v := range details {
+				d[k] = v
+			}
+			details = d
+		}
+	}
 	_, err := s.Audit.Append(ctx, tx, tenant, audit.Event{Actor: a.Type, ActorID: a.ID, Action: action, SubjectType: "reversal", SubjectID: ref, PolicyVersion: policy, Details: details})
 	return err
 }
@@ -338,5 +365,5 @@ func (s *Service) recordBlocked(ctx context.Context, tx pgx.Tx, tenant uuid.UUID
 	if _, err := notify.Record(ctx, tx, tenant, sub.Case.ID, notify.OpsHeld(sub.Case.Ref, strings.Join(reasons, "; ")), sub.Case.Ref+":ops:held:"+sig); err != nil {
 		return err
 	}
-	return s.auditEvent(ctx, tx, tenant, a, "reversal.blocked", sub.Case.Ref, g.PolicyVersion, map[string]any{"failed_checks": sig, "status_outcome": g.StatusOutcome})
+	return s.auditEvent(ctx, tx, tenant, a, "reversal.blocked", sub.Case.Ref, g.PolicyVersion, map[string]any{"failed_checks": sig, "status_outcome": g.StatusOutcome, "policy_id": PolicyID(sub.Case.Classification, sub.Txn.Rail)})
 }

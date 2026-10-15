@@ -122,6 +122,10 @@ type Action struct {
 	Rail          string
 	ExceptionType string
 	PolicyID      string
+	// PolicyUnknown says the action is governed by a policy that could not be
+	// identified. Any policy-scope freeze then covers it: a missing identity must
+	// never let an action slip past a freeze.
+	PolicyUnknown bool
 }
 
 // Service reads and changes the switch.
@@ -207,6 +211,9 @@ func (st State) Covers(a Action) error {
 		case ScopePolicy:
 			if a.PolicyID != "" && a.PolicyID == f.Target.Value {
 				return &FrozenError{Scope: ScopePolicy, Target: a.PolicyID}
+			}
+			if a.PolicyUnknown {
+				return &FrozenError{Scope: ScopePolicy, Target: f.Target.Value}
 			}
 		}
 	}
