@@ -12,6 +12,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 )
 
@@ -42,7 +43,20 @@ func run() error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	handler := server.NewRouter(server.Options{Logger: logger, Version: version})
+	pool, err := db.Open(ctx, cfg.DatabaseURL(), db.Options{
+		MaxConns:        int32(cfg.DBMaxConns),
+		MaxConnLifetime: cfg.DBConnMaxLifetime,
+	})
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	handler := server.NewRouter(server.Options{
+		Logger:   logger,
+		Version:  version,
+		Checkers: []server.Checker{pool},
+	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{
 		Read:     cfg.ReadTimeout,
 		Write:    cfg.WriteTimeout,
