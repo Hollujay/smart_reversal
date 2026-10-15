@@ -61,6 +61,13 @@ type Config struct {
 	JWTPublicKeys string
 	JWTTokenTTL   time.Duration
 
+	// AccountTokenKey and AccountEncKey are base64 32-byte keys for account
+	// tokens and the sealed account vault (ADR 0003, D10). Optional here; the
+	// API leaves the unmask route out when they are missing.
+	AccountTokenKey string
+	AccountEncKey   string
+	AccountEncKeyID string
+
 	AIServiceURL string
 
 	WorkerHealthPort   int
@@ -106,7 +113,11 @@ func LoadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		JWTPrivateKey:     l.str("JWT_PRIVATE_KEY", ""),
 		JWTPublicKeys:     l.str("JWT_PUBLIC_KEYS", ""),
 		JWTTokenTTL:       l.duration("JWT_TOKEN_TTL", 15*time.Minute),
-		AIServiceURL:      l.str("AI_SERVICE_URL", "http://localhost:8000"),
+
+		AccountTokenKey: l.str("ACCOUNT_TOKEN_KEY", ""),
+		AccountEncKey:   l.str("ACCOUNT_ENC_KEY", ""),
+		AccountEncKeyID: l.str("ACCOUNT_ENC_KEY_ID", "k1"),
+		AIServiceURL:    l.str("AI_SERVICE_URL", "http://localhost:8000"),
 
 		WorkerHealthPort:   l.port("WORKER_HEALTH_PORT", 8081),
 		OutboxPollInterval: l.duration("OUTBOX_POLL_INTERVAL", time.Second),

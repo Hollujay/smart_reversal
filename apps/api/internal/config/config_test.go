@@ -113,6 +113,22 @@ func TestSigningKeySettingsAreOptionalAndHaveDefaults(t *testing.T) {
 	}
 }
 
+func TestAccountKeySettings(t *testing.T) {
+	c, err := LoadFrom(env(base()))
+	if err != nil || c.AccountTokenKey != "" || c.AccountEncKey != "" || c.AccountEncKeyID != "k1" {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	c, err = LoadFrom(env(with(base(), "ACCOUNT_TOKEN_KEY", "t", "ACCOUNT_ENC_KEY", "e", "ACCOUNT_ENC_KEY_ID", "2026-10")))
+	if err != nil || c.AccountTokenKey != "t" || c.AccountEncKey != "e" || c.AccountEncKeyID != "2026-10" {
+		t.Fatalf("values: %+v %v", c, err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("cfg", "config", c)
+	if strings.Contains(buf.String(), "ACCOUNT") || strings.Contains(buf.String(), "=e ") {
+		t.Fatalf("account keys leaked into the log: %s", buf.String())
+	}
+}
+
 func TestLoggingConfigNeverIncludesSigningKey(t *testing.T) {
 	c, err := LoadFrom(env(with(base(), "JWT_PRIVATE_KEY", "private-key-material")))
 	if err != nil {
