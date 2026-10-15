@@ -598,26 +598,50 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/killswitch:
+    get:
+      tags: [Governance]
+      operationId: getKillSwitch
+      summary: Which scopes of automation are frozen, and which unfreeze requests are open
+      description: Open to every signed-in operator so screens can show that automation is frozen.
+      x-status: implemented
+      responses:
+        '200':
+          description: Current position.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KillSwitchState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       tags: [Governance]
-      operationId: setKillSwitch
-      summary: Freeze automation for a scope
+      operationId: changeKillSwitch
+      summary: Freeze automation, or ask to lift or decide a request to lift a freeze
       description: |
-        Scopes are global, rail, exception type and policy. Freezing is
-        immediate. Re-enabling needs dual control.
-      x-status: planned
-      x-phase: B1
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        Four scopes: `global`, `rail`, `exception_type` and `policy`. Needs the
+        `trigger_kill_switch` grant.
+
+        `freeze` is immediate, needs one person and no MFA. Freezing a scope that
+        is already frozen changes nothing. Lifting is the risky direction: `request_unfreeze`,
+        `approve_unfreeze` and `reject_unfreeze` need an MFA-backed token, and the
+        person who requested cannot decide (403 `SELF_APPROVAL`). The database
+        enforces this as well. Every consumer that could move money checks the
+        switch first and stops if it cannot read it.
+      x-status: implemented
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema: { $ref: '#/components/schemas/KillSwitchChange' }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: Position after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KillSwitchState' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
 components:
@@ -872,6 +896,42 @@ components:
         next_cutoff: { type: string, format: date-time }
         settlement_date: { type: string, format: date }
         time_zone: { type: string }
+    KillSwitchChange:
+      type: object
+      required: [action, reason]
+      properties:
+        action: { type: string, enum: [freeze, request_unfreeze, approve_unfreeze, reject_unfreeze] }
+        scope: { type: string, enum: [global, rail, exception_type, policy] }
+        target: { type: string, description: 'Empty for global. A rail code, exception code or policy id otherwise.', example: NIP }
+        request_id: { type: integer, format: int64, description: 'The open request to approve or reject.' }
+        reason: { type: string, minLength: 5 }
+    KillSwitchState:
+      type: object
+      required: [frozen, pending_unfreeze]
+      properties:
+        frozen:
+          type: array
+          items:
+            type: object
+            required: [scope, target, frozen_by, reason, frozen_at]
+            properties:
+              scope: { type: string }
+              target: { type: string }
+              frozen_by: { type: string, format: uuid }
+              reason: { type: string }
+              frozen_at: { type: string, format: date-time }
+        pending_unfreeze:
+          type: array
+          items:
+            type: object
+            required: [request_id, scope, target, requested_by, reason, requested_at]
+            properties:
+              request_id: { type: integer, format: int64 }
+              scope: { type: string }
+              target: { type: string }
+              requested_by: { type: string, format: uuid }
+              reason: { type: string }
+              requested_at: { type: string, format: date-time }
     UnmaskRequest:
       type: object
       required: [token, reason]
