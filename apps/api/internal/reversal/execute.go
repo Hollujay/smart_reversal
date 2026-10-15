@@ -14,7 +14,6 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
-	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -169,15 +168,26 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 			actor = cases.System // the system carries out what people approved
 		}
 
-		// Last look before money would move.
-		if err := s.Kill.Check(ctx, tx, tenant, killswitch.Action{Rail: sub.Txn.Rail, ExceptionType: sub.Case.Classification}); err != nil {
-			return s.failBeforeSubmit(ctx, tx, tenant, rev, sub, actor, err.Error(), &out)
+		// Last look before money would move. A freeze parks the reversal: it keeps
+		// its approval, nothing reaches the provider, and the sweep submits it after
+		// an authorised unfreeze, once the gate has been evaluated again. A switch
+		// that cannot be read ends the attempt with an error, so it is retried.
+		if fe, err := s.frozenFor(ctx, tx, tenant, sub); err != nil {
+			return err
+		} else if fe != nil {
+			return s.park(ctx, tx, tenant, rev, sub, fe, actor, &out)
 		}
 		gate, err := s.evaluate(ctx, tx, tenant, sub, Requester{}, rev.IdempotencyKey, true)
 		if err != nil {
 			return err
 		}
 		if gate.Verdict == Blocked {
+			// A freeze that arrived while the gate ran is a pause, not a failure.
+			if fe, err := s.frozenFor(ctx, tx, tenant, sub); err != nil {
+				return err
+			} else if fe != nil {
+				return s.park(ctx, tx, tenant, rev, sub, fe, actor, &out)
+			}
 			f := gate.Failed()
 			why := "evidence changed before execution"
 			if len(f) > 0 {
@@ -186,6 +196,9 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 			return s.failBeforeSubmit(ctx, tx, tenant, rev, sub, actor, why, &out)
 		}
 
+		if err := s.unpark(ctx, tx, tenant, rev, actor); err != nil {
+			return err
+		}
 		ack, perr := s.Provider.Submit(ctx, tx, tenant, Submission{IdempotencyKey: rev.IdempotencyKey, InstructionRef: sub.Txn.Ref,
 			ReversalRef: rev.Ref, AmountMinor: rev.AmountMinor, Currency: rev.Currency, ReasonCode: rev.ReasonCode})
 		now := s.now()

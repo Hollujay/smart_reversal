@@ -186,6 +186,12 @@ func (s *Service) Check(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, a Acti
 	if err != nil {
 		return fmt.Errorf("killswitch: cannot read the switch, treating automation as frozen: %w", err)
 	}
+	return st.Covers(a)
+}
+
+// Covers returns a *FrozenError if a frozen scope in st covers the action, and
+// nil otherwise. It lets a job read the switch once and judge many actions.
+func (st State) Covers(a Action) error {
 	for _, f := range st.Frozen {
 		switch f.Target.Scope {
 		case ScopeGlobal:
