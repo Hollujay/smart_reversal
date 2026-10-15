@@ -1,6 +1,6 @@
 # ADR 0003: Identity, Tenancy and Data Protection
 
-Status: Proposed defaults, applied in B1 on 2026-10-15 at the project owner's instruction to start B1. Decisions D5 to D10 were still open when work began, so each choice below is the recommendation from the decision register and can be changed. Each is isolated behind an interface or a single package so a change is cheap.
+Status: Proposed defaults, implemented in B1 on 2026-10-15 at the project owner's instruction to start B1. Decisions D5 to D10 were still open when work began, so each choice below is the recommendation from the decision register and can be changed. Each is isolated behind an interface or a single package so a change is cheap.
 
 ## Decisions applied
 
@@ -36,3 +36,10 @@ Superusers bypass row-level security in PostgreSQL. Production must connect as a
 - One environment key encrypts the account vault. Rotation and per-tenant keys are future work (I-04).
 - Login protection is a simple failed-attempt lockout. Rate limiting and MFA enrolment belong to B9 and the identity provider.
 - MFA is enforced only as a claim on the token (`mfa: true`) for privileged actions. Nothing here issues MFA challenges.
+
+## What B1 learned
+
+- Superusers bypass row-level security, so every isolation test switches to `sr_app` first. Any test that skipped that step would pass for the wrong reason.
+- Rate limits for account unmasking are counted from the audit trail itself. That keeps one source of truth shared by every API instance, at the price of a query per request.
+- The MFA rule belongs to the capability, but reading and proposing a change are not the privileged part. The first version applied it too widely, and an end-to-end run caught it (`GrantFor` now separates the two).
+- There is still no way to obtain an MFA-backed token. See decision D20.
