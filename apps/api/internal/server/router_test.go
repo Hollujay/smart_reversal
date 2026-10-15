@@ -137,3 +137,17 @@ func TestPanicBecomesInternalErrorWithoutLeak(t *testing.T) {
 		t.Fatalf("panic not logged: %s", logs.String())
 	}
 }
+
+func TestHealthReportsConfiguredServiceName(t *testing.T) {
+	logger, _ := quietLogger()
+	for service, want := range map[string]string{"": "api", "worker": "worker"} {
+		rec := do(NewRouter(Options{Logger: logger, Service: service}), http.MethodGet, "/v1/health")
+		var body liveBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Service != want {
+			t.Errorf("service %q reported as %q, want %q", service, body.Service, want)
+		}
+	}
+}

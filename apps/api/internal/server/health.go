@@ -19,6 +19,7 @@ type Checker interface {
 }
 
 type health struct {
+	service  string
 	version  string
 	checkers []Checker
 }
@@ -31,7 +32,7 @@ type liveBody struct {
 
 // live answers whether the process is running. It touches no dependency.
 func (h *health) live(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, liveBody{Status: "ok", Service: "api", Version: h.version})
+	httpx.WriteJSON(w, http.StatusOK, liveBody{Status: "ok", Service: h.service, Version: h.version})
 }
 
 type readyBody struct {

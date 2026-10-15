@@ -16,6 +16,8 @@ import (
 type Options struct {
 	Logger  *slog.Logger
 	Version string
+	// Service names the process in /v1/health. Default "api".
+	Service string
 	// Checkers are run by GET /v1/ready.
 	Checkers []Checker
 }
@@ -30,7 +32,11 @@ func NewRouter(o Options) http.Handler {
 	r.Use(observability.RequestLogger(o.Logger))
 	r.Use(recoverer(o.Logger))
 
-	h := &health{version: o.Version, checkers: o.Checkers}
+	service := o.Service
+	if service == "" {
+		service = "api"
+	}
+	h := &health{service: service, version: o.Version, checkers: o.Checkers}
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health", h.live)
 		v1.Get("/ready", h.ready)
