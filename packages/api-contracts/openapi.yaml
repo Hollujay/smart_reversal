@@ -537,8 +537,10 @@ paths:
         Needs the approve_reversal grant within the caller's limit and an
         MFA-backed token. The requester cannot approve (`SELF_APPROVAL`), nor
         someone linked to the accounts (`CONFLICT_OF_INTEREST`). A reason is
-        mandatory on rejection. Approving carries the reversal out against the
-        simulated provider and verifies it against the ledger before returning.
+        mandatory on rejection. Approving needs an approved `approval.validity_seconds`
+        (`409 APPROVAL_POLICY_MISSING` otherwise) and records when the approval ends.
+        Approving carries the reversal out against the simulated provider and verifies
+        it against the ledger before returning.
       x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
@@ -1536,6 +1538,7 @@ components:
         requested_by_type: { type: string, enum: [user, system] }
         approval_status: { type: string }
         approval_id: { type: string, format: uuid }
+        approval_expires_at: { type: string, format: date-time, description: When the newest approval stops being valid. }
         tracks: { $ref: '#/components/schemas/ReversalTracks' }
         gate: { $ref: '#/components/schemas/Gate' }
         policy_id: { type: string, example: reversal.FAIL001.NIP, description: Stable identity of the policy that governed the decision. }

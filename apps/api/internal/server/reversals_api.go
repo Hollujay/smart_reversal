@@ -24,34 +24,36 @@ type tracksJSON struct {
 }
 
 type reversalJSON struct {
-	ID              string        `json:"id"`
-	ReversalRef     string        `json:"reversal_ref"`
-	CaseID          string        `json:"case_id"`
-	TxnID           string        `json:"txn_id"`
-	AmountMinor     string        `json:"amount_minor"`
-	Currency        string        `json:"currency"`
-	ReasonCode      string        `json:"reason_code"`
-	RequestedByType string        `json:"requested_by_type"`
-	ApprovalStatus  string        `json:"approval_status"`
-	ApprovalID      string        `json:"approval_id,omitempty"`
-	Tracks          tracksJSON    `json:"tracks"`
-	Gate            reversal.Gate `json:"gate"`
-	PolicyID        string        `json:"policy_id"`
-	PolicyVersion   string        `json:"policy_version"`
-	ProviderRef     string        `json:"provider_ref,omitempty"`
-	FailureReason   string        `json:"failure_reason,omitempty"`
-	SubmittedAt     *time.Time    `json:"submitted_at,omitempty"`
-	PostedAt        *time.Time    `json:"posted_at,omitempty"`
-	VerifiedAt      *time.Time    `json:"verified_at,omitempty"`
-	CreatedAt       time.Time     `json:"created_at"`
-	Simulated       bool          `json:"simulated"`
+	ID              string `json:"id"`
+	ReversalRef     string `json:"reversal_ref"`
+	CaseID          string `json:"case_id"`
+	TxnID           string `json:"txn_id"`
+	AmountMinor     string `json:"amount_minor"`
+	Currency        string `json:"currency"`
+	ReasonCode      string `json:"reason_code"`
+	RequestedByType string `json:"requested_by_type"`
+	ApprovalStatus  string `json:"approval_status"`
+	ApprovalID      string `json:"approval_id,omitempty"`
+	// ApprovalExpiresAt is when the newest approval stops being valid.
+	ApprovalExpiresAt *time.Time    `json:"approval_expires_at,omitempty"`
+	Tracks            tracksJSON    `json:"tracks"`
+	Gate              reversal.Gate `json:"gate"`
+	PolicyID          string        `json:"policy_id"`
+	PolicyVersion     string        `json:"policy_version"`
+	ProviderRef       string        `json:"provider_ref,omitempty"`
+	FailureReason     string        `json:"failure_reason,omitempty"`
+	SubmittedAt       *time.Time    `json:"submitted_at,omitempty"`
+	PostedAt          *time.Time    `json:"posted_at,omitempty"`
+	VerifiedAt        *time.Time    `json:"verified_at,omitempty"`
+	CreatedAt         time.Time     `json:"created_at"`
+	Simulated         bool          `json:"simulated"`
 }
 
 func toReversalJSON(r reversal.Reversal) reversalJSON {
 	out := reversalJSON{ID: r.ID.String(), ReversalRef: r.Ref, CaseID: r.CaseID.String(), TxnID: r.TxnID.String(),
 		AmountMinor: strconv.FormatInt(r.AmountMinor, 10), Currency: r.Currency, ReasonCode: r.ReasonCode, RequestedByType: r.RequestedByType,
 		ApprovalStatus: r.ApprovalStatus, Tracks: tracksJSON{r.AcceptedStatus, r.ProcessingStatus, r.FinancialStatus}, Gate: r.Gate,
-		PolicyID: r.PolicyID, PolicyVersion: r.PolicyVersion, ProviderRef: r.ProviderRef, FailureReason: r.FailureReason, SubmittedAt: r.SubmittedAt, PostedAt: r.PostedAt, VerifiedAt: r.VerifiedAt,
+		ApprovalExpiresAt: r.ApprovalExpiresAt, PolicyID: r.PolicyID, PolicyVersion: r.PolicyVersion, ProviderRef: r.ProviderRef, FailureReason: r.FailureReason, SubmittedAt: r.SubmittedAt, PostedAt: r.PostedAt, VerifiedAt: r.VerifiedAt,
 		CreatedAt: r.CreatedAt, Simulated: true}
 	if r.ApprovalID != uuid.Nil {
 		out.ApprovalID = r.ApprovalID.String()
@@ -90,6 +92,8 @@ func writeReversalError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, reversal.ErrNotFound), errors.Is(err, cases.ErrNotFound):
 		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "not found")
+	case errors.Is(err, reversal.ErrNoApprovalPolicy):
+		httpx.WriteError(w, r, http.StatusConflict, "APPROVAL_POLICY_MISSING", "no approved approval validity period is configured, so nothing can be approved")
 	case errors.Is(err, reversal.ErrKeyReuse):
 		httpx.WriteError(w, r, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", err.Error())
 	case errors.Is(err, reversal.ErrNotPending), errors.Is(err, reversal.ErrBadState):

@@ -12,6 +12,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
+	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
@@ -101,8 +102,23 @@ func (s *Service) Decide(ctx context.Context, tenant uuid.UUID, checker *identit
 		if approve {
 			newStatus, newApproval = "APPROVED", "APPROVED"
 		}
-		if _, err := tx.Exec(ctx, `UPDATE approvals SET status = $3, checker = $4, decision_reason = $5, limit_applied = $6, decided_at = $7 WHERE tenant_id = $1 AND id = $2`,
-			tenant, approvalID, newStatus, checker.UserID, reason, limit, s.now()); err != nil {
+		// An approval is valid for a configured time. Without an approved validity
+		// period it could never expire, so it is not given.
+		var expires *time.Time
+		if approve {
+			v, err := s.Config.Effective(ctx, tx, tenant, "approval.validity_seconds", s.now())
+			if errors.Is(err, configsvc.ErrNotConfigured) {
+				return ErrNoApprovalPolicy
+			}
+			if err != nil {
+				return err
+			}
+			at := s.now().Add(time.Duration(v.Value) * time.Second)
+			expires = &at
+		}
+		if _, err := tx.Exec(ctx, `UPDATE approvals SET status = $3, checker = $4, decision_reason = $5, limit_applied = $6, decided_at = $7, expires_at = $8, policy_id = $9
+			WHERE tenant_id = $1 AND id = $2`,
+			tenant, approvalID, newStatus, checker.UserID, reason, limit, s.now(), expires, rev.PolicyID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE reversals SET approval_status = $3, version = version + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenant, revID, newApproval); err != nil {

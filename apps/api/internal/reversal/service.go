@@ -31,7 +31,10 @@ var (
 	ErrKeyReuse   = errors.New("reversal: that idempotency key was used for a different request")
 	ErrBadState   = errors.New("reversal: not in a state that allows this")
 	ErrNotPending = errors.New("reversal: this approval was already decided")
-	ErrSameActor  = authz.ErrSameActor
+	// ErrNoApprovalPolicy means no approved approval.validity_seconds exists, so an
+	// approval cannot be given: without a validity period it would never expire.
+	ErrNoApprovalPolicy = errors.New("reversal: no approved approval validity period, so nothing can be approved")
+	ErrSameActor        = authz.ErrSameActor
 )
 
 // Service runs reversals.
@@ -89,6 +92,8 @@ type Reversal struct {
 	// reversal was decided, and is never rewritten.
 	PolicyID      string `json:"policy_id"`
 	PolicyVersion string `json:"policy_version"`
+	// ApprovalExpiresAt is when the newest approval stops being valid.
+	ApprovalExpiresAt *time.Time `json:"approval_expires_at,omitempty"`
 }
 
 // PolicyID is the stable identity of the policy that governs reversals of one
@@ -97,14 +102,14 @@ func PolicyID(code, rail string) string { return "reversal." + code + "." + rail
 
 const reversalColumns = `r.id, r.reversal_ref, r.case_id, r.txn_id, r.idempotency_key, coalesce(r.requested_by::text, ''), r.requested_by_type,
 	r.amount_minor, r.currency, r.reason_code, r.approval_status, r.accepted_status, r.processing_status, r.financial_status, r.gate_result,
-	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version, r.parked_at, r.policy_id, r.policy_version`
+	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version, r.parked_at, r.policy_id, r.policy_version, a.expires_at`
 
 func scanReversal(row pgx.Row) (Reversal, error) {
 	var r Reversal
 	var gate []byte
 	if err := row.Scan(&r.ID, &r.Ref, &r.CaseID, &r.TxnID, &r.IdempotencyKey, &r.RequestedBy, &r.RequestedByType, &r.AmountMinor, &r.Currency,
 		&r.ReasonCode, &r.ApprovalStatus, &r.AcceptedStatus, &r.ProcessingStatus, &r.FinancialStatus, &gate, &r.ProviderRef, &r.FailureReason,
-		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version, &r.ParkedAt, &r.PolicyID, &r.PolicyVersion); err != nil {
+		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version, &r.ParkedAt, &r.PolicyID, &r.PolicyVersion, &r.ApprovalExpiresAt); err != nil {
 		return r, err
 	}
 	_ = json.Unmarshal(gate, &r.Gate)
@@ -112,7 +117,9 @@ func scanReversal(row pgx.Row) (Reversal, error) {
 	return r, nil
 }
 
-const reversalFrom = ` FROM reversals r LEFT JOIN approvals a ON a.tenant_id = r.tenant_id AND a.reversal_id = r.id`
+// A reversal may have had several approvals; the newest is the one that counts.
+const reversalFrom = ` FROM reversals r LEFT JOIN LATERAL (SELECT id, expires_at FROM approvals WHERE tenant_id = r.tenant_id AND reversal_id = r.id
+	ORDER BY created_at DESC, id DESC LIMIT 1) a ON true`
 
 // Get loads a reversal by id or reference.
 func (s *Service) Get(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, idOrRef string) (Reversal, error) {

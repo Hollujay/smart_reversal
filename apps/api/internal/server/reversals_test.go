@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func newRevRig(t *testing.T) *revRig {
 	for k, v := range map[string]int{
 		"duplicate.window_seconds": 30, "status_query.freshness_seconds": 120, "waiting_threshold_seconds.NIP": 300,
 		"approval.auto_limit_minor": 5_000_000, "reversal.simulated_execution_enabled": 1,
-		"approval.limit_minor.SUPERVISOR": 100_000_000, "approval.limit_minor.REVERSAL_OFFICER": 5_000_000,
+		"approval.limit_minor.SUPERVISOR": 100_000_000, "approval.validity_seconds": 3600, "approval.limit_minor.REVERSAL_OFFICER": 5_000_000,
 	} {
 		rg.set(t, k, v)
 	}
@@ -135,7 +136,7 @@ func TestReversalRequestApprovalAndVerificationOverHTTP(t *testing.T) {
 		t.Fatalf("want 202, got %d %s", code, out)
 	}
 	rev := decode(t, out)
-	if rev["approval_status"] != "PENDING" || rev["simulated"] != true || rev["amount_minor"] != "1850000" {
+	if rev["approval_status"] != "PENDING" || rev["simulated"] != true || rev["amount_minor"] != "1850000" || rev["policy_id"] != "reversal.FAIL001.NIP" {
 		t.Fatalf("unexpected: %s", out)
 	}
 	tracks := rev["tracks"].(map[string]any)
@@ -274,5 +275,13 @@ func TestReconciliationAndSummaryReflectVerifiedAndOrphanPostings(t *testing.T) 
 	}
 	if code, _ = r.call("GET", "/v1/reports/summary", "", ""); code != 401 {
 		t.Fatalf("unauthenticated: %d", code)
+	}
+}
+
+func TestAMissingApprovalPolicyIsReportedAsItsOwnError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeReversalError(rec, httptest.NewRequest("POST", "/v1/approvals/x/decision", nil), reversal.ErrNoApprovalPolicy)
+	if rec.Code != http.StatusConflict || decode(t, rec.Body.Bytes())["error"] != "APPROVAL_POLICY_MISSING" {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
