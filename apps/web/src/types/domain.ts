@@ -55,21 +55,105 @@ export interface Transaction {
   isVerified: boolean;
 }
 
+export type ClassificationCode =
+  | 'DUP001'
+  | 'FAIL001'
+  | 'UNK001'
+  | 'REV001'
+  | 'STL001'
+  | 'CUS001';
+
+export type ExceptionSource = 'BOT' | 'CUSTOMER';
+
+export type RootCause =
+  | 'SWITCH_TIMEOUT'
+  | 'LEDGER_GLITCH'
+  | 'NETWORK_SPLIT'
+  | 'MERCHANT_DROP'
+  | 'CUSTOMER_DOUBLE_TAP'
+  | 'SUSPENSE_MISMATCH';
+
+export type Lane =
+  | 'FAST_TRACK'
+  | 'MANUAL_INVESTIGATION'
+  | 'SUPERVISOR_QUEUE'
+  | 'COMPLIANCE_HOLD';
+
+export type SLAStatus = 'ON_TRACK' | 'APPROACHING' | 'BREACHED';
+
+export type ExceptionTeam =
+  | 'TIER_1_TRIAGE'
+  | 'TIER_2_RECON'
+  | 'DISPUTE_RESOLUTION'
+  | 'FRAUD_OPS';
+
+export interface PriorityFactors {
+  amountWeight: number;
+  slaWeight: number;
+  customerWeight: number;
+  anomalyWeight: number;
+  rationale: string;
+}
+
+export interface ExceptionNote {
+  id: string;
+  author: string;
+  authorRole: Role;
+  timestamp: string;
+  text: string;
+}
+
+export interface ExceptionStateTransition {
+  from: FinancialStatus;
+  to: FinancialStatus;
+  reasonCode: string;
+  author: string;
+  timestamp: string;
+}
+
 export interface FinancialException {
   id: string;
   transactionId: string;
   reference: string;
   type: ExceptionType;
+  classificationCode: ClassificationCode;
+  source: ExceptionSource;
+  rootCause: RootCause;
   severity: Severity;
   amount: string;
   currency: string;
+  exposure: string;
+  exposureType: 'DIRECT_LOSS' | 'SUSPENSE_HOLD' | 'CUSTOMER_DISPUTE';
   channel: Channel;
   status: FinancialStatus;
+  lane: Lane;
   description: string;
   detectedAt: string;
+  debitTimestamp: string;
+  internalSlaTarget: string; // ISO string
+  regulatoryDeadline: string; // ISO string
+  slaStatus: SLAStatus;
   modelConfidence: number; // e.g. 96
   modelExplanation: string;
-  assignedTo?: string;
+  priorityScore: number; // 0 - 100
+  priorityFactors: PriorityFactors;
+  assignedTo?: string; // e.g. "analyst.maker@wema.ng"
+  ownerName?: string;
+  team: ExceptionTeam;
+  sourceFreshness: string; // e.g. "Live (2s)" or "Degraded (15m lag)"
+  sourceFreshnessState: 'LIVE' | 'DEGRADED' | 'STALE';
+  repeatContactCount: number;
+  incidentId?: string; // e.g. "INC-8821"
+  incidentTitle?: string;
+  version: number; // For optimistic concurrency conflict detection
+  notes: ExceptionNote[];
+  stateHistory: ExceptionStateTransition[];
+  maskedPan?: string;
+  accountNumber?: string;
+  customerName?: string;
+  customerPhone?: string;
+  rrn?: string;
+  stan?: string;
 }
 
 export interface EvidenceItem {
