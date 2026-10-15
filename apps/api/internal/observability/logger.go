@@ -5,64 +5,89 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-type correlationIDKey struct{}
+// TraceHeader carries the trace identifier on requests and responses.
+const TraceHeader = "X-Trace-Id"
 
-// NewLogger initializes a structured JSON logger adhering to enterprise observability standards.
-func NewLogger(env string) *slog.Logger {
-	var handler slog.Handler
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}
+type traceIDKey struct{}
+
+// validTraceID limits what a caller can place in logs and response headers.
+var validTraceID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
+
+// NewLogger returns a structured logger. Development uses readable text,
+// every other environment uses JSON.
+func NewLogger(env, level string) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: parseLevel(level)}
 	if env == "development" {
-		opts.Level = slog.LevelDebug
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
-	return slog.New(handler)
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
 
-// CorrelationMiddleware injects or propagates an X-Correlation-ID header and context value.
-func CorrelationMiddleware(next http.Handler) http.Handler {
+func parseLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// TraceMiddleware reads X-Trace-Id when it looks safe, otherwise generates one,
+// stores it in the request context and echoes it on the response.
+func TraceMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		corrID := r.Header.Get("X-Correlation-ID")
-		if corrID == "" {
-			corrID = uuid.NewString()
+		id := r.Header.Get(TraceHeader)
+		if !validTraceID.MatchString(id) {
+			id = uuid.NewString()
 		}
-		w.Header().Set("X-Correlation-ID", corrID)
-		ctx := context.WithValue(r.Context(), correlationIDKey{}, corrID)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		w.Header().Set(TraceHeader, id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), traceIDKey{}, id)))
 	})
 }
 
-// GetCorrelationID extracts the correlation ID from context.
-func GetCorrelationID(ctx context.Context) string {
-	if val, ok := ctx.Value(correlationIDKey{}).(string); ok {
-		return val
-	}
-	return ""
+// TraceID returns the trace identifier stored in ctx, or an empty string.
+func TraceID(ctx context.Context) string {
+	id, _ := ctx.Value(traceIDKey{}).(string)
+	return id
 }
 
-// RequestLoggerMiddleware logs structured request metadata with elapsed duration.
-func RequestLoggerMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// RequestLogger logs one structured line per request. It records the path but
+// never the query string or headers, which may carry identifiers or tokens.
+func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			corrID := GetCorrelationID(r.Context())
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(rec, r)
 
-			logger.Info("http_request",
+			logger.LogAttrs(r.Context(), slog.LevelInfo, "http_request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
-				slog.String("remote_addr", r.RemoteAddr),
-				slog.String("correlation_id", corrID),
-				slog.Duration("duration_ms", time.Since(start)),
+				slog.Int("status", rec.status),
+				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+				slog.String("trace_id", TraceID(r.Context())),
 			)
 		})
 	}
