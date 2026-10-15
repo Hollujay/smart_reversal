@@ -230,3 +230,23 @@ func TestConfigRoutesAreAbsentWithoutTheService(t *testing.T) {
 		t.Fatal("route answered")
 	}
 }
+
+func TestReadingAndProposingNeedNoMFAButApprovingDoes(t *testing.T) {
+	r := newConfigRig(t)
+	path := "/v1/config/" + cfgKey
+	sup := r.tokenMFA(t, uuid.New(), false, "SUPERVISOR")
+	risk := r.tokenMFA(t, uuid.New(), false, "RISK_COMPLIANCE")
+
+	if rec := r.do(http.MethodGet, path, risk, ""); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NOT_CONFIGURED") {
+		t.Fatalf("read without MFA: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := r.do(http.MethodGet, path+"/versions", risk, ""); rec.Code != http.StatusOK {
+		t.Fatalf("history without MFA: %d", rec.Code)
+	}
+	decodeVersion(t, r.do(http.MethodPost, path+"/proposals", sup, proposalBody(30, time.Now())), http.StatusCreated)
+
+	rec := r.do(http.MethodPost, path+"/versions/1/decision", risk, `{"decision":"approved"}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "MFA_REQUIRED") {
+		t.Fatalf("approving without MFA: %d %s", rec.Code, rec.Body.String())
+	}
+}

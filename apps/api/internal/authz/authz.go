@@ -155,8 +155,24 @@ var breadth = map[string]int{
 }
 
 // Check reports whether p may use capability given a. On success it returns the
-// grant, whose Scope the handler must apply.
+// grant, whose Scope the handler must apply. A capability marked as needing MFA
+// is refused with ErrMFARequired unless the token carries it.
 func (pol *Policy) Check(p *identity.Principal, capability string, a Attrs) (Grant, error) {
+	g, err := pol.GrantFor(p, capability, a)
+	if err != nil {
+		return Grant{}, err
+	}
+	if pol.mfa[capability] && !p.MFA {
+		return Grant{}, ErrMFARequired
+	}
+	return g, nil
+}
+
+// GrantFor is Check without the MFA rule. Use it for the read-only and
+// preparatory uses of a capability that is privileged only when it is exercised,
+// such as reading configuration or proposing a change, where the approval is
+// what needs MFA. Everything else about the check is the same.
+func (pol *Policy) GrantFor(p *identity.Principal, capability string, a Attrs) (Grant, error) {
 	if pol == nil || p == nil {
 		return Grant{}, ErrForbidden
 	}
@@ -183,9 +199,6 @@ func (pol *Policy) Check(p *identity.Principal, capability string, a Attrs) (Gra
 	}
 	if best == nil {
 		return Grant{}, ErrForbidden
-	}
-	if pol.mfa[capability] && !p.MFA {
-		return Grant{}, ErrMFARequired
 	}
 	return *best, nil
 }

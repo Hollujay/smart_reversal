@@ -42,14 +42,29 @@ func (s *Services) ready() bool {
 	return s != nil && s.Pool != nil && s.Policy != nil && s.Audit != nil
 }
 
-// authorize runs the policy check and writes the failure response itself.
+// authorize runs the policy check, including the MFA rule, and writes the
+// failure response itself.
 func (s *Services) authorize(w http.ResponseWriter, r *http.Request, capability string, a authz.Attrs) (identity.Principal, authz.Grant, bool) {
+	return s.authorizeWith(w, r, capability, a, true)
+}
+
+// authorizeNoMFA is authorize without the MFA rule, for reading and for
+// preparing a change whose approval is what needs MFA.
+func (s *Services) authorizeNoMFA(w http.ResponseWriter, r *http.Request, capability string, a authz.Attrs) (identity.Principal, authz.Grant, bool) {
+	return s.authorizeWith(w, r, capability, a, false)
+}
+
+func (s *Services) authorizeWith(w http.ResponseWriter, r *http.Request, capability string, a authz.Attrs, mfa bool) (identity.Principal, authz.Grant, bool) {
 	p := identity.FromContext(r.Context())
 	if p == nil {
 		unauthorized(w, r)
 		return identity.Principal{}, authz.Grant{}, false
 	}
-	g, err := s.Policy.Check(p, capability, a)
+	check := s.Policy.GrantFor
+	if mfa {
+		check = s.Policy.Check
+	}
+	g, err := check(p, capability, a)
 	switch {
 	case err == nil:
 		return *p, g, true

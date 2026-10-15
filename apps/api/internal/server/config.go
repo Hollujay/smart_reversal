@@ -69,7 +69,7 @@ func writeConfigError(w http.ResponseWriter, r *http.Request, err error) {
 
 // readConfig serves GET /v1/config/{key}, the value in force at a time.
 func (s *Services) readConfig(w http.ResponseWriter, r *http.Request) {
-	p, _, ok := s.authorize(w, r, "change_rules", authz.Attrs{})
+	p, _, ok := s.authorizeNoMFA(w, r, "change_rules", authz.Attrs{})
 	if !ok {
 		return
 	}
@@ -97,7 +97,7 @@ func (s *Services) readConfig(w http.ResponseWriter, r *http.Request) {
 
 // configHistory serves GET /v1/config/{key}/versions.
 func (s *Services) configHistory(w http.ResponseWriter, r *http.Request) {
-	p, _, ok := s.authorize(w, r, "change_rules", authz.Attrs{})
+	p, _, ok := s.authorizeNoMFA(w, r, "change_rules", authz.Attrs{})
 	if !ok {
 		return
 	}
@@ -130,7 +130,7 @@ type proposeRequest struct {
 // draft scopes may do this. The approve scope may not: the person who approves
 // does not also propose.
 func (s *Services) proposeConfig(w http.ResponseWriter, r *http.Request) {
-	p, grant, ok := s.authorize(w, r, "change_rules", authz.Attrs{})
+	p, grant, ok := s.authorizeNoMFA(w, r, "change_rules", authz.Attrs{})
 	if !ok {
 		return
 	}

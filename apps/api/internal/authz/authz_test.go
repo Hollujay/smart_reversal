@@ -295,3 +295,24 @@ func TestMultipleRolesTakeTheWidestApplicableScope(t *testing.T) {
 		t.Fatalf("got %+v err=%v", g, err)
 	}
 }
+
+func TestGrantForSkipsOnlyTheMFARule(t *testing.T) {
+	pol := policy()
+	noMFA := who(false, "SUPERVISOR")
+	if g, err := pol.GrantFor(noMFA, "change_rules", Attrs{}); err != nil || g.Scope != "propose" {
+		t.Fatalf("grant without MFA: %+v %v", g, err)
+	}
+	if _, err := pol.Check(noMFA, "change_rules", Attrs{}); !errors.Is(err, ErrMFARequired) {
+		t.Fatalf("Check must still demand MFA: %v", err)
+	}
+	// Everything else is unchanged: no grant, no access.
+	if _, err := pol.GrantFor(who(false, "AGENT"), "change_rules", Attrs{}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("agent: %v", err)
+	}
+	if _, err := pol.GrantFor(who(false, "TXN_ANALYST"), "view_unmasked_account", Attrs{Reason: "short"}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("reason gate must still apply: %v", err)
+	}
+	if _, err := pol.GrantFor(nil, "change_rules", Attrs{}); !errors.Is(err, ErrForbidden) {
+		t.Errorf("nil principal: %v", err)
+	}
+}
