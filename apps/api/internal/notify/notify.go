@@ -8,11 +8,14 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 )
 
 // Audiences and stages.
@@ -101,18 +104,28 @@ func OpsReversalFailed(caseRef, reversalID, why string) Message {
 }
 
 // Record stores m for a case. The dedupe key makes it safe to call twice: the
-// second call records nothing and reports created=false.
+// second call records nothing, emits nothing and reports created=false. A new
+// notification also emits notification.recorded in the same transaction. The
+// event names the notification but never carries its text.
 func Record(ctx context.Context, tx pgx.Tx, tenant, caseID uuid.UUID, m Message, dedupeKey string) (created bool, err error) {
 	if dedupeKey == "" {
 		return false, fmt.Errorf("notify: a dedupe key is required")
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO notifications (tenant_id, case_id, audience, stage, template_id, body, dedupe_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (tenant_id, dedupe_key) DO NOTHING`,
-		tenant, caseID, m.Audience, m.Stage, m.Template, m.Body, dedupeKey)
+	var id uuid.UUID
+	err = tx.QueryRow(ctx, `INSERT INTO notifications (tenant_id, case_id, audience, stage, template_id, body, dedupe_key)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (tenant_id, dedupe_key) DO NOTHING RETURNING id`,
+		tenant, caseID, m.Audience, m.Stage, m.Template, m.Body, dedupeKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("notify: record: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	if _, err := events.Emit(ctx, tx, tenant, events.Event{Type: events.NotificationRecorded, AggregateID: caseID.String(), Key: id.String(),
+		Fields: map[string]any{"notification_id": id.String(), "case_id": caseID.String(), "audience": m.Audience, "stage": m.Stage, "template_id": m.Template}}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Stored is a recorded notification.
@@ -128,10 +141,12 @@ type Stored struct {
 }
 
 // ForCase lists a case's notifications, oldest first, for one audience (or all
-// when audience is empty).
+// when audience is empty). Messages with the same timestamp are put in the order
+// the customer would read them (detected before verified), so the order is
+// always the same.
 func ForCase(ctx context.Context, tx pgx.Tx, tenant, caseID uuid.UUID, audience string) ([]Stored, error) {
 	rows, err := tx.Query(ctx, `SELECT id, audience, stage, template_id, body, status, simulated, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
-		FROM notifications WHERE tenant_id = $1 AND case_id = $2 AND ($3 = '' OR audience = $3) ORDER BY created_at, id`, tenant, caseID, audience)
+		FROM notifications WHERE tenant_id = $1 AND case_id = $2 AND ($3 = '' OR audience = $3) ORDER BY created_at, CASE stage WHEN 'detected' THEN 0 WHEN 'verified' THEN 2 ELSE 1 END, id`, tenant, caseID, audience)
 	if err != nil {
 		return nil, err
 	}

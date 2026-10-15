@@ -12,6 +12,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
+	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
@@ -129,6 +130,11 @@ func (s *Service) Decide(ctx context.Context, tenant uuid.UUID, checker *identit
 			map[string]any{"case": c.Ref, "approval_id": approvalID.String(), "reason": reason}); err != nil {
 			return err
 		}
+		if approve {
+			if err := s.emit(ctx, tx, tenant, events.ReversalApproved, revID, nil); err != nil {
+				return err
+			}
+		}
 		out, err = s.Get(ctx, tx, tenant, revID.String())
 		return err
 	})
@@ -204,7 +210,7 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 				tenant, rev.ID, ack.ProviderRef, ack.Reason, now); err != nil {
 				return err
 			}
-			if err := s.failedReversal(ctx, tx, tenant, rev, sub, actor, ack.Reason); err != nil {
+			if err := s.failedReversal(ctx, tx, tenant, rev, sub, actor, "PROVIDER_REJECTED", ack.Reason); err != nil {
 				return err
 			}
 		default:
@@ -219,6 +225,9 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 				return err
 			}
 			if err := s.auditEvent(ctx, tx, tenant, actor, "reversal.submitted", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"case": sub.Case.Ref, "provider_ref": ack.ProviderRef, "simulated": true}); err != nil {
+				return err
+			}
+			if err := s.emit(ctx, tx, tenant, events.ReversalSubmitted, rev.ID, nil); err != nil {
 				return err
 			}
 		}
@@ -263,6 +272,9 @@ func (s *Service) failBeforeSubmit(ctx context.Context, tx pgx.Tx, tenant uuid.U
 	if err := s.auditEvent(ctx, tx, tenant, a, "reversal.stopped", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"why": why}); err != nil {
 		return err
 	}
+	if err := s.emit(ctx, tx, tenant, events.ReversalFailed, rev.ID, map[string]any{"failure_code": "STOPPED_BEFORE_SUBMISSION"}); err != nil {
+		return err
+	}
 	r, err := s.Get(ctx, tx, tenant, rev.ID.String())
 	*out = r
 	return err
@@ -270,7 +282,7 @@ func (s *Service) failBeforeSubmit(ctx context.Context, tx pgx.Tx, tenant uuid.U
 
 // failedReversal handles a reversal that was refused or could not be verified:
 // the case reflects it and a REV001 case is opened for the failure itself.
-func (s *Service) failedReversal(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev Reversal, sub subject, a cases.Actor, why string) error {
+func (s *Service) failedReversal(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev Reversal, sub subject, a cases.Actor, code, why string) error {
 	c, err := s.Cases.Get(ctx, tx, tenant, rev.CaseID)
 	if err != nil {
 		return err
@@ -302,7 +314,10 @@ func (s *Service) failedReversal(ctx context.Context, tx pgx.Tx, tenant uuid.UUI
 	if err := s.event(ctx, tx, tenant, rev.CaseID, a, "reversal_failed", map[string]any{"reversal": rev.Ref, "why": why}); err != nil {
 		return err
 	}
-	return s.auditEvent(ctx, tx, tenant, a, "reversal.failed", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"case": sub.Case.Ref, "why": why})
+	if err := s.auditEvent(ctx, tx, tenant, a, "reversal.failed", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"case": sub.Case.Ref, "why": why}); err != nil {
+		return err
+	}
+	return s.emit(ctx, tx, tenant, events.ReversalFailed, rev.ID, map[string]any{"failure_code": code})
 }
 
 // Advance moves a submitted reversal forward: it asks the provider where the
@@ -349,7 +364,7 @@ func (s *Service) Advance(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 					version = version + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenant, rev.ID, ack.Reason, ack.ProviderRef); err != nil {
 					return err
 				}
-				if err := s.failedReversal(ctx, tx, tenant, rev, sub, actor, ack.Reason); err != nil {
+				if err := s.failedReversal(ctx, tx, tenant, rev, sub, actor, "PROVIDER_REJECTED", ack.Reason); err != nil {
 					return err
 				}
 				out, err = s.Get(ctx, tx, tenant, rev.ID.String())
@@ -401,7 +416,7 @@ func (s *Service) verify(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev R
 		if _, err := tx.Exec(ctx, `UPDATE reversals SET financial_status = 'FAILED', failure_reason = $3, version = version + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenant, rev.ID, why); err != nil {
 			return rev, err
 		}
-		if err := s.failedReversal(ctx, tx, tenant, rev, sub, a, why); err != nil {
+		if err := s.failedReversal(ctx, tx, tenant, rev, sub, a, "LEDGER_MISMATCH", why); err != nil {
 			return rev, err
 		}
 		return s.Get(ctx, tx, tenant, rev.ID.String())
@@ -452,6 +467,9 @@ func (s *Service) verify(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev R
 		return rev, err
 	}
 	if err := s.auditEvent(ctx, tx, tenant, a, "reversal.verified", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"case": sub.Case.Ref, "simulated": true}); err != nil {
+		return rev, err
+	}
+	if err := s.emit(ctx, tx, tenant, events.ReversalVerified, rev.ID, nil); err != nil {
 		return rev, err
 	}
 	return s.Get(ctx, tx, tenant, rev.ID.String())

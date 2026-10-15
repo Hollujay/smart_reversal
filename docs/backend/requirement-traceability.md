@@ -1,6 +1,6 @@
 # Backend Requirement Traceability Matrix
 
-Last updated: 2026-10-15. Reconciled against the four playbooks supplied by the project owner:
+Last updated: 2026-10-15. Section 1 was refreshed against the implemented backend (baseline tag `demo-baseline-2026-10-15`). The detailed per-requirement status for B2 to B11 is in `remaining-work-matrix.md`; sections 2 to 9 below are unchanged from earlier phases. Reconciled against the four playbooks supplied by the project owner:
 
 1. Full Project Scope ("Scope", sections numbered as in that document)
 2. v2 Integrated Scope Prompt Pack ("v2")
@@ -13,22 +13,22 @@ State key: `none` nothing in the repo, `stub` placeholder or in-memory, `partial
 
 | FR | Requirement | Phase | Repo state |
 |---|---|---|---|
-| FR-01 to FR-03 | Ingest all sources into one normalised stream, support NIP, POS, ATM, card, mobile, internet, USSD, gateway, merchant, NIBSS and settlement files, quarantine malformed events | B2 | stub (`transactions`) |
-| FR-04 to FR-06 | Duplicate detection with references and session, risk grade Low/Medium/High, 30 s default window, configurable | B3 | none |
-| FR-07 to FR-09 | Debit without credit, debit with settlement incomplete, NIP failed with funds withheld, POS timeout with debit (plus ATM, vendor, fee cases) | B3 | none |
-| FR-10 | Unknown status detected, status query triggered, never treated as failed | B3, B5 | none |
-| FR-11 | Settlement file versus core banking mismatch | B3, B6 | none |
-| FR-12 | ML score on flagged transactions | AI track (A5) | AI stub. Backend owns the adapter only |
-| FR-13 to FR-16 | Auto-create case, codes, root cause on every case, priority | B4, B3 | stub (`exceptions`) |
-| FR-17 | SLA deadline from regulatory clock, regulatory deadline and internal target shown separately | B4, B10 | none |
-| FR-18 to FR-23 | 8-check gate, status query first, auto-reverse only on confirmed failure, approval routing, idempotency, REV001 on failure | B5 | none |
-| FR-24, FR-25 | Customer and ops notifications, deduplicated, two-stage | B7 | none |
-| FR-26 to FR-34 | ReverseIt intake, parse, match, classify, countdown, complaint, status timeline, escalation ladder, labelled examples | B10 (parse is AI A9) | none |
-| FR-35, FR-36 | Operations and executive dashboard data | B8 | none |
-| FR-37 | Decision log with actor, before, after, time, hash-chained | B1 | stub (in memory) |
-| FR-38 | Scheduled bots never bypass the gate | B11 | none |
-| FR-39 | Rules, thresholds, windows, limits and clocks editable without code, versioned, audited | B1, B3 | none |
-| FR-40 | RBAC for operations, management, compliance, customers, plus supervisor, agent, admin | B1 | stub, unsafe |
+| FR-01 to FR-03 | Ingest all sources into one normalised stream, support NIP, POS, ATM, card, mobile, internet, USSD, gateway, merchant, NIBSS and settlement files, quarantine malformed events | B2 | partial. REST ingestion, validation and quarantine done (`txn`, `server/ingest.go`). File and consumer adapters, mapping configs, source freshness: none |
+| FR-04 to FR-06 | Duplicate detection with references and session, risk grade Low/Medium/High, 30 s default window, configurable | B3 | partial. Duplicate detector with risk grade and configurable window (`detect`). No legitimate-repeat allow-list |
+| FR-07 to FR-09 | Debit without credit, debit with settlement incomplete, NIP failed with funds withheld, POS timeout with debit (plus ATM, vendor, fee cases) | B3 | partial. Confirmed failure and stuck transactions detected. ATM, vendor, fee and settlement-incomplete detectors: none |
+| FR-10 | Unknown status detected, status query triggered, never treated as failed | B3, B5 | complete. Unknown is never treated as failed; blocked at the gate (`detect`, `reversal`) |
+| FR-11 | Settlement file versus core banking mismatch | B3, B6 | none. Needs B6 |
+| FR-12 | ML score on flagged transactions | AI track (A5) | AI track. No backend adapter yet |
+| FR-13 to FR-16 | Auto-create case, codes, root cause on every case, priority | B4, B3 | partial. Auto-created cases with codes, root cause and fixed priority (`cases`, `detect`). No configurable priority score |
+| FR-17 | SLA deadline from regulatory clock, regulatory deadline and internal target shown separately | B4, B10 | partial. Deadline from approved clocks. No separate internal target |
+| FR-18 to FR-23 | 8-check gate, status query first, auto-reverse only on confirmed failure, approval routing, idempotency, REV001 on failure | B5 | mostly complete against simulated sources (`reversal`). Approval expiry, circuit breaker, partial and fee handling: none |
+| FR-24, FR-25 | Customer and ops notifications, deduplicated, two-stage | B7 | partial. Two-stage, deduplicated, recorded and simulated (`notify`). No delivery tracking, retry or provider adapters |
+| FR-26 to FR-34 | ReverseIt intake, parse, match, classify, countdown, complaint, status timeline, escalation ladder, labelled examples | B10 (parse is AI A9) | partial. Agent-entered complaints and customer status only. No customer authentication, parser, fuzzy matching, deadline states, escalation ladder or label store |
+| FR-35, FR-36 | Operations and executive dashboard data | B8 | partial. `GET /v1/reports/summary` and reversal reconciliation. No metrics catalogue |
+| FR-37 | Decision log with actor, before, after, time, hash-chained | B1 | complete. Hash-chained audit with verification (`audit`) |
+| FR-38 | Scheduled bots never bypass the gate | B11 | partial. Worker sweeps go through the gate. Not kill-switch aware at job level |
+| FR-39 | Rules, thresholds, windows, limits and clocks editable without code, versioned, audited | B1, B3 | complete. Versioned maker-checker configuration (`configsvc`). Rules are code, not yet declarative |
+| FR-40 | RBAC for operations, management, compliance, customers, plus supervisor, agent, admin | B1 | complete for operators (`authz`). Customer audience: none |
 | FR-41 to FR-58 | Added by v2 section 5.5: customer auth and rate limits (41), alert authenticity (42), wrong-account path (43), duplicate posting vs transfer (44), notification tracking and opt-out (45), inward credit delay EX-DLY (46), business calendar WAT (47), internal target earlier than deadline (48), demo controls (49), label store with ops confirmation (50), link repeat reports (51), reopen on disputed outcome (52), OpenAPI per interface with contract tests (53), mask before external AI call (54), mobile-first flow (55, frontend), consent and retention (56), agent view (57, frontend), mocked status and reversal services with scripted outcomes (58) | B0 to B11 as in v2 | none |
 
 ## 2. B0 deliverables from v2 (prompt B0)
