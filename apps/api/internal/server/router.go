@@ -72,6 +72,9 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/config/{key}/versions", o.Services.configHistory)
 					pr.Post("/config/{key}/proposals", o.Services.proposeConfig)
 					pr.Post("/config/{key}/versions/{version}/decision", o.Services.decideConfig)
+					pr.Get("/calendar/add-working-days", o.Services.addWorkingDays)
+					pr.Get("/calendar/business-time", o.Services.businessTime)
+					pr.Get("/calendar/next-cutoff", o.Services.nextCutoff)
 				}
 				if o.Services.Vault != nil {
 					pr.Post("/accounts/unmask", o.Services.unmask)
