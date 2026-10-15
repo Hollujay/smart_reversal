@@ -67,6 +67,12 @@ func NewRouter(o Options) http.Handler {
 			pr.Get("/me", me)
 			if o.Services.ready() {
 				pr.Get("/audit", o.Services.listAudit)
+				if o.Services.Config != nil {
+					pr.Get("/config/{key}", o.Services.readConfig)
+					pr.Get("/config/{key}/versions", o.Services.configHistory)
+					pr.Post("/config/{key}/proposals", o.Services.proposeConfig)
+					pr.Post("/config/{key}/versions/{version}/decision", o.Services.decideConfig)
+				}
 				if o.Services.Vault != nil {
 					pr.Post("/accounts/unmask", o.Services.unmask)
 				}

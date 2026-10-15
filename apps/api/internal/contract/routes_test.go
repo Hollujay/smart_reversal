@@ -11,6 +11,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
@@ -25,7 +26,7 @@ func routerOperations(t *testing.T) map[string]bool {
 		// A non-nil authenticator mounts the login route.
 		Auth: &identity.Authenticator{},
 		// Non-nil services mount the routes that need a database and a policy.
-		Services: &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}},
+		Services: &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}, Config: &configsvc.Service{}},
 	})
 	routes, ok := h.(chi.Routes)
 	if !ok {
@@ -93,7 +94,7 @@ func TestNoPlannedOperationIsAlreadyServed(t *testing.T) {
 // Guards against the comparisons above passing because both sides are empty.
 func TestRouteDiscoveryFindsKnownRoutes(t *testing.T) {
 	served := routerOperations(t)
-	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask"} {
+	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask", "GET /v1/config/{key}", "POST /v1/config/{key}/versions/{version}/decision"} {
 		if !served[want] {
 			t.Errorf("route discovery did not find %s; found %v", want, served)
 		}

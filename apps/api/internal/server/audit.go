@@ -11,6 +11,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
@@ -24,6 +25,8 @@ type Services struct {
 	Audit  *audit.Appender
 	// Vault enables POST /v1/accounts/unmask. Nil leaves the route out.
 	Vault *datashield.Vault
+	// Config enables the /v1/config routes. Nil leaves them out.
+	Config *configsvc.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int
