@@ -63,15 +63,15 @@ func TestLoadReportsAllMissingRequired(t *testing.T) {
 
 func TestLoadRejectsBadValues(t *testing.T) {
 	cases := map[string]map[string]string{
-		"short secret":   with(base(), "JWT_SECRET", "short"),
-		"bad port":       with(base(), "API_PORT", "70000"),
-		"non numeric":    with(base(), "DB_PORT", "abc"),
-		"bad duration":   with(base(), "API_READ_TIMEOUT", "fast"),
-		"zero duration":  with(base(), "API_IDLE_TIMEOUT", "0s"),
+		"short secret":    with(base(), "JWT_SECRET", "short"),
+		"bad port":        with(base(), "API_PORT", "70000"),
+		"non numeric":     with(base(), "DB_PORT", "abc"),
+		"bad duration":    with(base(), "API_READ_TIMEOUT", "fast"),
+		"zero duration":   with(base(), "API_IDLE_TIMEOUT", "0s"),
 		"bad environment": with(base(), "ENVIRONMENT", "prod"),
-		"bad log level":  with(base(), "LOG_LEVEL", "trace"),
-		"bad bool":       with(base(), "FINANCIAL_EXECUTION_ENABLED", "maybe"),
-		"negative redis": with(base(), "REDIS_DB", "-1"),
+		"bad log level":   with(base(), "LOG_LEVEL", "trace"),
+		"bad bool":        with(base(), "FINANCIAL_EXECUTION_ENABLED", "maybe"),
+		"negative redis":  with(base(), "REDIS_DB", "-1"),
 	}
 	for name, m := range cases {
 		t.Run(name, func(t *testing.T) {
