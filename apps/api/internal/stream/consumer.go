@@ -35,6 +35,7 @@ type Message struct {
 	// ID is the Redis stream entry id.
 	ID          string
 	Stream      string
+	TenantID    uuid.UUID
 	EventID     uuid.UUID
 	Type        string
 	AggregateID string
@@ -215,10 +216,10 @@ func (c *Consumer) process(ctx context.Context, raw redis.XMessage, deliveries i
 	}
 
 	duplicate := false
-	herr := c.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+	herr := c.Pool.WithTenant(ctx, msg.TenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`INSERT INTO processed_events (consumer, event_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			c.Group, msg.EventID)
+			`INSERT INTO processed_events (tenant_id, consumer, event_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			msg.TenantID, c.Group, msg.EventID)
 		if err != nil {
 			return err
 		}
@@ -280,6 +281,14 @@ func decode(stream string, raw redis.XMessage, deliveries int64) (Message, error
 		s, ok := raw.Values[k].(string)
 		return s, ok && s != ""
 	}
+	tenantStr, ok := get("tenant_id")
+	if !ok {
+		return Message{}, errors.New("tenant_id missing")
+	}
+	tenant, err := uuid.Parse(tenantStr)
+	if err != nil || tenant == uuid.Nil {
+		return Message{}, errors.New("tenant_id is not a UUID")
+	}
 	idStr, ok := get("event_id")
 	if !ok {
 		return Message{}, errors.New("event_id missing")
@@ -299,7 +308,7 @@ func decode(stream string, raw redis.XMessage, deliveries int64) (Message, error
 	agg, _ := get("aggregate_id")
 	trace, _ := get("trace_id")
 	return Message{
-		ID: raw.ID, Stream: stream, EventID: id, Type: typ, AggregateID: agg,
+		ID: raw.ID, Stream: stream, TenantID: tenant, EventID: id, Type: typ, AggregateID: agg,
 		TraceID: trace, Payload: []byte(payload), Deliveries: deliveries,
 	}, nil
 }

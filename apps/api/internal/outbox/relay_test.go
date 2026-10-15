@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 )
 
 func testRedis(t *testing.T) *redis.Client {
@@ -32,10 +33,11 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 func enqueue(t *testing.T, p *db.Pool, stream string, n int) {
 	t.Helper()
 	ctx := context.Background()
+	tid := dbtest.Tenant(t, p)
 	err := p.WithTx(ctx, func(tx pgx.Tx) error {
 		for i := 1; i <= n; i++ {
 			if _, err := Enqueue(ctx, tx, Event{
-				Stream: stream, Type: "test.happened", AggregateID: "AGG-1",
+				TenantID: tid, Stream: stream, Type: "test.happened", AggregateID: "AGG-1",
 				Payload: map[string]int{"n": i}, TraceID: "trace-x",
 			}); err != nil {
 				return err

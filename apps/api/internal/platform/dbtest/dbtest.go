@@ -2,7 +2,10 @@
 package dbtest
 
 import (
+	"strings"
+
 	"context"
+	"github.com/google/uuid"
 	"os"
 	"testing"
 	"time"
@@ -38,4 +41,29 @@ func Pool(t testing.TB) *db.Pool {
 		t.Fatalf("migrate: %v", err)
 	}
 	return p
+}
+
+// Tenant creates an institution for one test and removes it, and everything
+// that refers to it, when the test ends. It uses the pool's own role, which is
+// not subject to row-level security.
+func Tenant(t testing.TB, p *db.Pool) uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
+	code := "T-" + strings.ToUpper(uuid.NewString()[:12])
+	var id uuid.UUID
+	if err := p.QueryRow(ctx, `INSERT INTO institutions (code, name) VALUES ($1, $1) RETURNING id`, code).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		for _, q := range []string{
+			`DELETE FROM processed_events WHERE tenant_id = $1`,
+			`DELETE FROM outbox_events WHERE tenant_id = $1`,
+			`DELETE FROM users WHERE tenant_id = $1`,
+			`DELETE FROM institutions WHERE id = $1`,
+		} {
+			_, _ = p.Exec(bg, q, id)
+		}
+	})
+	return id
 }

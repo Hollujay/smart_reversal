@@ -65,7 +65,7 @@ func (r *Relay) PublishPending(ctx context.Context) (int, error) {
 		}
 
 		rows, err := tx.Query(ctx, `
-			SELECT id, event_id::text, stream, event_type, aggregate_id, payload::text, trace_id
+			SELECT id, tenant_id::text, event_id::text, stream, event_type, aggregate_id, payload::text, trace_id
 			FROM outbox_events
 			WHERE published_at IS NULL
 			ORDER BY id
@@ -75,13 +75,13 @@ func (r *Relay) PublishPending(ctx context.Context) (int, error) {
 			return err
 		}
 		type row struct {
-			id                                              int64
-			eventID, stream, typ, aggregate, payload, trace string
+			id                                                        int64
+			tenantID, eventID, stream, typ, aggregate, payload, trace string
 		}
 		var pending []row
 		for rows.Next() {
 			var x row
-			if err := rows.Scan(&x.id, &x.eventID, &x.stream, &x.typ, &x.aggregate, &x.payload, &x.trace); err != nil {
+			if err := rows.Scan(&x.id, &x.tenantID, &x.eventID, &x.stream, &x.typ, &x.aggregate, &x.payload, &x.trace); err != nil {
 				rows.Close()
 				return err
 			}
@@ -99,6 +99,7 @@ func (r *Relay) PublishPending(ctx context.Context) (int, error) {
 				MaxLen: maxLen,
 				Approx: true,
 				Values: map[string]any{
+					"tenant_id":    x.tenantID,
 					"event_id":     x.eventID,
 					"type":         x.typ,
 					"aggregate_id": x.aggregate,
