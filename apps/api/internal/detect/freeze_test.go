@@ -3,17 +3,23 @@ package detect
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/automation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
+	"github.com/smartreversal/smartreversal/apps/api/internal/outbox"
+	"github.com/smartreversal/smartreversal/apps/api/internal/stream"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
@@ -373,5 +379,62 @@ func TestTheDetectorSweepJobPausesUnderAGlobalFreezeAndShowsNarrowerOnes(t *test
 	}
 	if codes(r.allCases(t))[cases.CodeUnknown] != 1 {
 		t.Fatal("a freeze on another rail stopped the sweep")
+	}
+}
+
+// A message that arrives from the stream while a freeze covers it is handled, not
+// retried into the dead-letter stream and not lost: it becomes durable deferred
+// work in PostgreSQL and is carried out after the unfreeze.
+func TestStreamMessagesHeldByAFreezeAreAcknowledgedOnlyBecauseTheyAreStoredAndResume(t *testing.T) {
+	addr := os.Getenv("TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("TEST_REDIS_ADDR not set; skipping Redis integration test")
+	}
+	r := newRig(t)
+	r.withKill()
+	ctx := context.Background()
+	rc := redis.NewClient(&redis.Options{Addr: addr})
+	defer rc.Close()
+	name := fmt.Sprintf("test.freeze.%d", time.Now().UnixNano())
+	defer rc.Del(ctx, name, stream.DeadLetterStream(name))
+
+	if _, err := r.pool.Exec(ctx, `DELETE FROM outbox_events WHERE stream = $1`, txn.Stream); err != nil {
+		t.Fatal(err)
+	}
+	r.freeze(t, killswitch.ScopeRail, "NIP")
+	id := r.failedTransfer(t, "FZ-STREAM", r.now.Add(-10*time.Minute))
+	if _, err := r.pool.Exec(ctx, `UPDATE outbox_events SET stream = $2 WHERE tenant_id = $1 AND stream = $3`, r.tenant, name, txn.Stream); err != nil {
+		t.Fatal(err)
+	}
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	relay := &outbox.Relay{Pool: r.pool, Redis: rc, Logger: quiet}
+	if n, err := relay.PublishPending(ctx); err != nil || n < 3 {
+		t.Fatalf("relay published %d: %v", n, err)
+	}
+	c := &stream.Consumer{Pool: r.pool, Redis: rc, Logger: quiet, Stream: name, Group: "detector-freeze", Name: "c1", Handler: r.det.Handle,
+		Block: 50 * time.Millisecond, ClaimIdle: time.Hour, MaxDeliveries: 2}
+	if err := c.Setup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := c.RunOnce(ctx); err != nil || n < 3 {
+		t.Fatalf("consumer handled %d: %v", n, err)
+	}
+	if len(r.allCases(t)) != 0 || r.deferred(t) != 1 {
+		t.Fatalf("expected one held item and no case: %d cases, %d held", len(r.allCases(t)), r.deferred(t))
+	}
+	if pending, err := rc.XPending(ctx, name, "detector-freeze").Result(); err != nil || pending.Count != 0 {
+		t.Fatalf("messages left unacknowledged: %+v %v", pending, err)
+	}
+	if n, err := rc.XLen(ctx, stream.DeadLetterStream(name)).Result(); err != nil || n != 0 {
+		t.Fatalf("held messages must not be dead-lettered: %d %v", n, err)
+	}
+
+	r.unfreeze(t, killswitch.ScopeRail, "NIP")
+	if resumed, held := r.resume(t); resumed != 1 || held != 0 {
+		t.Fatalf("%d resumed, %d held", resumed, held)
+	}
+	cs := r.allCases(t)
+	if len(cs) != 1 || cs[0].TxnID == nil || *cs[0].TxnID != id {
+		t.Fatalf("%+v", cs)
 	}
 }
