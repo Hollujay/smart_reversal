@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Sparkles,
   ShieldAlert,
   Send,
   MessageSquare,
@@ -16,13 +15,13 @@ import {
 import clsx from 'clsx';
 import { Button } from '../components/Button';
 import { MaskedField } from '../components/MaskedField';
-import { RiskConfidenceIndicator } from '../components/RiskConfidenceIndicator';
 import { StickyCaseHeader } from './investigations/StickyCaseHeader';
 import { LifecycleTimeline } from './investigations/LifecycleTimeline';
 import { EvidenceDossier } from './investigations/EvidenceDossier';
 import { DuplicateComparisonView } from './investigations/DuplicateComparisonView';
 import { CustomerReportedAlertCard } from './investigations/CustomerReportedAlertCard';
 import { RootCauseTagEditor } from './investigations/RootCauseTagEditor';
+import { AICopilotPanel } from './investigations/AICopilotPanel';
 import { ExternalDependencyModal } from './investigations/ExternalDependencyModal';
 import { CloseCaseModal } from './investigations/CloseCaseModal';
 import { useApp } from '../context/AppContext';
@@ -212,6 +211,57 @@ export const InvestigationsView: React.FC = () => {
     } finally {
       setIsAddingNote(false);
     }
+  };
+
+  const handleAddNoteDirect = async (text: string) => {
+    try {
+      await apiClient.addExceptionNote(
+        activeCase.exceptionId,
+        'SmartReversal Copilot',
+        'ADMIN',
+        text
+      );
+      setCases((prev) =>
+        prev.map((c) => {
+          if (c.id === activeCase.id) {
+            return {
+              ...c,
+              exception: {
+                ...c.exception,
+                notes: [
+                  ...c.exception.notes,
+                  {
+                    id: `note-${Date.now()}`,
+                    author: 'SmartReversal Copilot',
+                    authorRole: 'ADMIN',
+                    timestamp: new Date().toISOString(),
+                    text,
+                  },
+                ],
+              },
+            };
+          }
+          return c;
+        })
+      );
+      addToast({
+        type: 'info',
+        title: 'Copilot Citation Appended',
+        message: 'Saved AI finding to case investigation notes.',
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handlePopulateReversalDraft = (_justification: string) => {
+    setSelectedTransactionId(activeCase.exception.transactionId);
+    setActiveView('reversals');
+    addToast({
+      type: 'info',
+      title: 'Copilot Justification Loaded',
+      message: `Pre-populated Maker reversal proposal for ${activeCase.reference}.`,
+    });
   };
 
   const handleJumpToEvidence = (evId: string) => {
@@ -484,20 +534,12 @@ export const InvestigationsView: React.FC = () => {
         {/* RIGHT COLUMN: AI Summary, Hypotheses, Notes, Actions (Cols 9-12)*/}
         {/* ============================================================== */}
         <div className="lg:col-span-4 p-4 space-y-4 overflow-y-auto bg-[var(--surface)] text-[12px]">
-          {/* AI Explainable Summary & Remediation */}
-          <div className="p-3.5 rounded-md bg-sky-50/70 border border-sky-300 text-sky-950 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 font-bold text-[13px] text-sky-900">
-                <Sparkles className="w-4 h-4 text-sky-700" />
-                <span>Explainable AI Diagnosis</span>
-              </div>
-              <RiskConfidenceIndicator modelConfidence={activeCase.modelConfidence} />
-            </div>
-
-            <p className="text-[12px] text-sky-950 leading-relaxed">
-              {activeCase.aiSuggestedRemedy}
-            </p>
-          </div>
+          {/* Prompt F8 / Screen 9: Interactive AI Copilot & Citation Assistant */}
+          <AICopilotPanel
+            investigationCase={activeCase}
+            onAddNote={handleAddNoteDirect}
+            onPopulateReversalDraft={handlePopulateReversalDraft}
+          />
 
           {/* Scope v2 Mandatory: Editable Root-Cause Tag */}
           <RootCauseTagEditor
