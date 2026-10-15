@@ -58,6 +58,9 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^approval\.auto_limit_minor$`), 0, 1 << 52, "minor units", "Largest amount that may be reversed without a human approval", false},
 	{regexp.MustCompile(`^approval\.limit_minor\.[A-Z_]{3,40}$`), 0, 1 << 52, "minor units", "Largest amount a role may approve", false},
 	{regexp.MustCompile(`^sla\.pause_max_hours$`), 0, 24 * 30, "hours", "Longest an SLA clock may stay paused without supervisor re-approval", false},
+	{regexp.MustCompile(`^calendar\.holiday\.[0-9]{4}-[0-9]{2}-[0-9]{2}$`), 0, 1, "flag", "1 marks a public holiday on that date, 0 marks a working day that would otherwise be off", false},
+	{regexp.MustCompile(`^calendar\.cutoff_minute\.[A-Z0-9_]{2,30}$`), 0, 1439, "minutes after midnight", "Daily cut-off for a rail, in the institution's local time", false},
+	{regexp.MustCompile(`^calendar\.settlement_lag_days\.[A-Z0-9_]{2,30}$`), 0, 10, "business days", "Business days between the cut-off date and settlement on a rail", false},
 	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
 
@@ -385,4 +388,31 @@ func (s *Service) Rollback(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UU
 		Key: key, Value: raw, SourceReference: fmt.Sprintf("rollback to version %d (%s)", toVersion, old.SourceReference),
 		EffectiveFrom: effectiveFrom, VerifyStatus: old.VerifyStatus, Reason: reason,
 	})
+}
+
+// EffectiveByPrefix returns the approved version in force at time at for every
+// key that starts with prefix. It is how a whole family of keys, such as the
+// calendar's, is read in one query.
+func (s *Service) EffectiveByPrefix(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, prefix string, at time.Time) (map[string]Version, error) {
+	if prefix == "" || len(prefix) > 60 {
+		return nil, fmt.Errorf("%w: a prefix is required", ErrInvalidInput)
+	}
+	rows, err := tx.Query(ctx, selectVersion+`
+		WHERE v.tenant_id = $1 AND starts_with(v.key, $2) AND d.decision = 'approved' AND v.effective_from <= $3
+		ORDER BY v.key, v.effective_from DESC, v.version DESC`, tenant, prefix, at.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("configsvc: read %s*: %w", prefix, err)
+	}
+	defer rows.Close()
+	out := map[string]Version{}
+	for rows.Next() {
+		v, err := scanVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		if _, seen := out[v.Key]; !seen { // rows are newest first within a key
+			out[v.Key] = v
+		}
+	}
+	return out, rows.Err()
 }
