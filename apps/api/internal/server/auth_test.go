@@ -15,6 +15,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 )
@@ -80,7 +81,7 @@ func newAuthRig(t *testing.T) *authRig {
 			Logger: logger, Verifier: verifier,
 			Auth: &identity.Authenticator{Store: &memStore{tenant: tenant, user: user}, Signer: signer},
 			// Mounted so the route-policy test below walks the data routes too.
-			Services: &Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}},
+			Services: &Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}},
 		}),
 	}
 }
@@ -180,7 +181,7 @@ func TestEveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen < 5 {
+	if seen < 6 {
 		t.Fatalf("walk found only %d routes", seen)
 	}
 }

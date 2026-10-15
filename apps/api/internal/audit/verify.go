@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -193,4 +194,22 @@ func nilIfZero(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+// CountSince returns how many records of action the actor has written at or
+// after since. Rate limits use it, so the limit is as durable as the audit
+// trail and shared by every API instance.
+func CountSince(ctx context.Context, tx pgx.Tx, tenant, actor uuid.UUID, action string, since time.Time) (int, error) {
+	if err := requireTenantTx(ctx, tx, tenant); err != nil {
+		return 0, err
+	}
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE tenant_id = $1 AND actor_id = $2 AND action = $3 AND occurred_at >= $4`,
+		tenant, actor, action, since.UTC()).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("audit: count: %w", err)
+	}
+	return n, nil
 }

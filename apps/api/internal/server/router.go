@@ -67,6 +67,9 @@ func NewRouter(o Options) http.Handler {
 			pr.Get("/me", me)
 			if o.Services.ready() {
 				pr.Get("/audit", o.Services.listAudit)
+				if o.Services.Vault != nil {
+					pr.Post("/accounts/unmask", o.Services.unmask)
+				}
 			}
 		})
 	})

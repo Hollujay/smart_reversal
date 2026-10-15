@@ -381,6 +381,43 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /v1/accounts/unmask:
+    post:
+      tags: [Governance]
+      operationId: unmaskAccount
+      summary: Reveal one account number
+      description: |
+        Account numbers are held as tokens. This call releases the original and
+        needs the `view_unmasked_account` grant, a real reason (at least ten
+        characters) and an MFA-backed token. Every call, including a request for
+        an unknown token, is written to the audit chain before anything is
+        returned, and each caller is limited to a few reveals per window (429).
+        Responses are never cacheable.
+      x-status: implemented
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnmaskRequest' }
+      responses:
+        '200':
+          description: The account number.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnmaskResponse' }
+        '400': { description: Body is not a single JSON object with known fields. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Not permitted. The code `MFA_REQUIRED` means the caller holds the grant but the token was issued without MFA.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /v1/killswitch:
     post:
       tags: [Governance]
@@ -581,6 +618,19 @@ components:
           items: { type: string }
         mfa: { type: boolean }
         expires_at: { type: string, format: date-time }
+    UnmaskRequest:
+      type: object
+      required: [token, reason]
+      properties:
+        token: { type: string, example: acct_0123456789abcdef0123456789abcdef }
+        reason: { type: string, minLength: 10, example: customer disputes a missing credit, ticket 4411 }
+    UnmaskResponse:
+      type: object
+      required: [token, account_number, masked]
+      properties:
+        token: { type: string }
+        account_number: { type: string }
+        masked: { type: string, example: '****6789' }
     AuditRecord:
       type: object
       required: [seq, id, occurred_at, actor_type, action, evidence_refs, sensitive_access, details, prev_hash, record_hash]

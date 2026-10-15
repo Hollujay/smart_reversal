@@ -11,6 +11,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
@@ -21,6 +22,14 @@ type Services struct {
 	Pool   *db.Pool
 	Policy *authz.Policy
 	Audit  *audit.Appender
+	// Vault enables POST /v1/accounts/unmask. Nil leaves the route out.
+	Vault *datashield.Vault
+	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
+	// Defaults are 10 per 10 minutes.
+	UnmaskLimit  int
+	UnmaskWindow time.Duration
+	// Now is the clock for rate limiting. Defaults to time.Now.
+	Now func() time.Time
 }
 
 func (s *Services) ready() bool {
