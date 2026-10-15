@@ -18,6 +18,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
@@ -269,6 +270,9 @@ func (s *Service) Request(ctx context.Context, tenant uuid.UUID, in RequestInput
 			return err
 		}
 		if err := s.auditEvent(ctx, tx, tenant, actor, "reversal.requested", ref, gate.PolicyVersion, map[string]any{"case": sub.Case.Ref, "approval": approval, "amount_minor": sub.Txn.Amount}); err != nil {
+			return err
+		}
+		if err := s.emit(ctx, tx, tenant, events.ReversalRequested, id, nil); err != nil {
 			return err
 		}
 		r, err := s.Get(ctx, tx, tenant, id.String())
