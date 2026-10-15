@@ -90,6 +90,10 @@ func (s *Service) Decide(ctx context.Context, tenant uuid.UUID, checker *identit
 		if err != nil {
 			return err
 		}
+		c0, err := s.Cases.Get(ctx, tx, tenant, rev.CaseID)
+		if err != nil {
+			return err
+		}
 		tokens := []string{t.DebitToken}
 		if t.BeneficiaryTok != "" {
 			tokens = append(tokens, t.BeneficiaryTok)
@@ -116,9 +120,24 @@ func (s *Service) Decide(ctx context.Context, tenant uuid.UUID, checker *identit
 			at := s.now().Add(time.Duration(v.Value) * time.Second)
 			expires = &at
 		}
-		if _, err := tx.Exec(ctx, `UPDATE approvals SET status = $3, checker = $4, decision_reason = $5, limit_applied = $6, decided_at = $7, expires_at = $8, policy_id = $9
+		// The approval records the policy it was given under, so a later change that
+		// matters can be recognised.
+		basis, policyNow := "", ""
+		if approve {
+			var err error
+			if basis, err = s.authorityBasis(ctx, tx, tenant, c0.Classification); err != nil {
+				return err
+			}
+			pol, err := s.policy(ctx, tx, tenant, t.Rail, c0.Classification, s.now())
+			if err != nil {
+				return err
+			}
+			policyNow = strings.Join(pol.versions, ";")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE approvals SET status = $3, checker = $4, decision_reason = $5, limit_applied = $6, decided_at = $7, expires_at = $8, policy_id = $9,
+				policy_version = $10, authority_basis = $11
 			WHERE tenant_id = $1 AND id = $2`,
-			tenant, approvalID, newStatus, checker.UserID, reason, limit, s.now(), expires, rev.PolicyID); err != nil {
+			tenant, approvalID, newStatus, checker.UserID, reason, limit, s.now(), expires, rev.PolicyID, policyNow, basis); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE reversals SET approval_status = $3, version = version + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenant, revID, newApproval); err != nil {
@@ -163,7 +182,7 @@ func ptr[T any](v T) *T { return &v }
 // and it consults the kill switch. A re-check that fails ends the reversal safely.
 func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Reversal, error) {
 	var out Reversal
-	expired := false
+	expired, invalidated := false, false
 	err := s.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
 		rev, err := s.lockReversal(ctx, tx, tenant, reversalID)
 		if err != nil {
@@ -232,6 +251,33 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 			return s.failBeforeSubmit(ctx, tx, tenant, rev, sub, actor, why, &out)
 		}
 
+		// Policy may have changed since the approval was given. If the reversal still
+		// needs a person's approval and the settings that authorisation relied on are
+		// no longer the same, the earlier approval does not carry over. A reversal the
+		// policy now lets automation submit needs no approval and proceeds.
+		if rev.ApprovalStatus == "APPROVED" && gate.Verdict == PassNeedsApproval {
+			now, err := s.authorityBasis(ctx, tx, tenant, sub.Case.Classification)
+			if err != nil {
+				return err
+			}
+			then, err := s.approvalBasis(ctx, tx, tenant, rev.ID)
+			if err != nil {
+				return err
+			}
+			if then == "" || then != now {
+				why := "the policy the approval relied on changed (" + orNone(then) + " became " + orNone(now) + ")"
+				if then == "" {
+					why = "the approval did not record the policy it relied on"
+				}
+				if err := s.expireApprovalAs(ctx, tx, tenant, rev, sub, actor, why, "approval_invalidated", "reversal.approval_invalidated"); err != nil {
+					return err
+				}
+				invalidated = true
+				out, err = s.Get(ctx, tx, tenant, rev.ID.String())
+				return err
+			}
+		}
+
 		if err := s.unpark(ctx, tx, tenant, rev, actor); err != nil {
 			return err
 		}
@@ -285,6 +331,9 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 	})
 	if err == nil && expired {
 		return out, ErrApprovalExpired // the lapse itself was committed above
+	}
+	if err == nil && invalidated {
+		return out, ErrApprovalInvalidated
 	}
 	return out, err
 }

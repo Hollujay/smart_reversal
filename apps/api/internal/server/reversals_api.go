@@ -98,6 +98,8 @@ func writeReversalError(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.WriteError(w, r, http.StatusConflict, "APPROVAL_POLICY_MISSING", "no approved approval validity period is configured, so nothing can be approved")
 	case errors.Is(err, reversal.ErrApprovalExpired):
 		httpx.WriteError(w, r, http.StatusConflict, "APPROVAL_EXPIRED", "the approval is no longer valid; request a fresh approval")
+	case errors.Is(err, reversal.ErrApprovalInvalidated):
+		httpx.WriteError(w, r, http.StatusConflict, "APPROVAL_INVALIDATED", "the policy changed since this was approved; request a fresh approval")
 	case errors.Is(err, reversal.ErrKeyReuse):
 		httpx.WriteError(w, r, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", err.Error())
 	case errors.Is(err, reversal.ErrNotPending), errors.Is(err, reversal.ErrBadState):

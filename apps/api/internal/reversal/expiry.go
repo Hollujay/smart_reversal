@@ -48,18 +48,24 @@ func (s *Service) approvalStillValid(ctx context.Context, tx pgx.Tx, tenant uuid
 // until a fresh approval is given. The lapse is written to the case history, the
 // audit trail and the operations alerts, once.
 func (s *Service) expireApproval(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev Reversal, sub subject, a cases.Actor, why string) error {
+	return s.expireApprovalAs(ctx, tx, tenant, rev, sub, a, why, "approval_expired", "reversal.approval_expired")
+}
+
+// expireApprovalAs is expireApproval with the names used in the case history and
+// the audit trail, so a lapse and a policy change are told apart.
+func (s *Service) expireApprovalAs(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev Reversal, sub subject, a cases.Actor, why, caseKind, auditAction string) error {
 	tag, err := tx.Exec(ctx, `UPDATE reversals SET approval_status = 'EXPIRED', version = version + 1, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2 AND approval_status = 'APPROVED'`, tenant, rev.ID)
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
-	if err := s.event(ctx, tx, tenant, rev.CaseID, a, "approval_expired", map[string]any{"reversal": rev.Ref, "why": why}); err != nil {
+	if err := s.event(ctx, tx, tenant, rev.CaseID, a, caseKind, map[string]any{"reversal": rev.Ref, "why": why}); err != nil {
 		return err
 	}
 	if _, err := notify.Record(ctx, tx, tenant, rev.CaseID, notify.OpsApprovalExpired(sub.Case.Ref, rev.Ref, why), sub.Case.Ref+":ops:expired:"+rev.Ref+":"+fmt.Sprint(rev.Version)); err != nil {
 		return err
 	}
-	return s.auditEvent(ctx, tx, tenant, a, "reversal.approval_expired", rev.Ref, rev.PolicyVersion, map[string]any{"case": sub.Case.Ref, "why": why})
+	return s.auditEvent(ctx, tx, tenant, a, auditAction, rev.Ref, rev.PolicyVersion, map[string]any{"case": sub.Case.Ref, "why": why})
 }
 
 // ExpireDue marks every approved but unsubmitted reversal whose approval has
@@ -184,4 +190,11 @@ func (s *Service) RequestReapproval(ctx context.Context, tenant uuid.UUID, who *
 		return err
 	})
 	return out, err
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }

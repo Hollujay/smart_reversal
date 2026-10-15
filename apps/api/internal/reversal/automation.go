@@ -65,7 +65,7 @@ func (s *Service) AutoReverse(ctx context.Context, tenant, caseID uuid.UUID) (Au
 		return res, nil
 	}
 
-	if rev, err = s.Execute(ctx, tenant, rev.ID); errors.Is(err, ErrApprovalExpired) {
+	if rev, err = s.Execute(ctx, tenant, rev.ID); errors.Is(err, ErrApprovalExpired) || errors.Is(err, ErrApprovalInvalidated) {
 		res.Reversal, res.Outcome = &rev, "approval_expired"
 		return res, nil
 	} else if err != nil {
@@ -182,7 +182,7 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 			heldWaiting++
 			continue
 		}
-		if _, err := s.Execute(ctx, tenant, w.id); errors.Is(err, ErrApprovalExpired) {
+		if _, err := s.Execute(ctx, tenant, w.id); errors.Is(err, ErrApprovalExpired) || errors.Is(err, ErrApprovalInvalidated) {
 			continue // recorded; it waits for a fresh approval
 		} else if err != nil {
 			return out, fmt.Errorf("reversal: submit %s: %w", w.id, err)
