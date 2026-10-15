@@ -397,3 +397,65 @@ func TestRunProcessesUntilCancelled(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+func TestReplayDeadLettersReturnsEntriesToTheStream(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	var fail atomic.Bool
+	fail.Store(true)
+	c := f.consumer("c1", func(ctx context.Context, tx pgx.Tx, m Message) error {
+		if fail.Load() {
+			return errors.New("downstream broken")
+		}
+		return recordEffect(ctx, tx, m)
+	})
+	if err := c.Setup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	evt := uuid.New()
+	f.publish(t, evt)
+
+	for i := 0; i < 8; i++ {
+		if _, err := c.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if f.pending(t) == 0 {
+			break
+		}
+		time.Sleep(150 * time.Millisecond) // longer than ClaimIdle
+	}
+	if l, _ := f.rc.XLen(ctx, DeadLetterStream(f.stream)).Result(); l != 1 {
+		t.Fatalf("expected 1 dead letter, got %d", l)
+	}
+
+	fail.Store(false) // the cause is fixed
+	n, err := ReplayDeadLetters(ctx, f.rc, f.stream, 10)
+	if err != nil || n != 1 {
+		t.Fatalf("replay n=%d err=%v", n, err)
+	}
+	if l, _ := f.rc.XLen(ctx, DeadLetterStream(f.stream)).Result(); l != 0 {
+		t.Fatalf("dead letter stream still has %d entries", l)
+	}
+
+	entries, _ := f.rc.XRevRangeN(ctx, f.stream, "+", "-", 1).Result()
+	for k := range entries[0].Values {
+		if len(k) >= 4 && k[:4] == "dlq_" {
+			t.Fatalf("replayed entry kept annotation %s", k)
+		}
+	}
+
+	if _, err := c.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.effects(t) != 1 || f.pending(t) != 0 {
+		t.Fatalf("effects=%d pending=%d after replay", f.effects(t), f.pending(t))
+	}
+}
+
+func TestReplayDeadLettersOnEmptyStream(t *testing.T) {
+	f := newFixture(t)
+	n, err := ReplayDeadLetters(context.Background(), f.rc, f.stream, 10)
+	if err != nil || n != 0 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
