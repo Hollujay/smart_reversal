@@ -99,6 +99,10 @@ func LoadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		JWTSecret:         l.required("JWT_SECRET"),
 		AIServiceURL:      l.str("AI_SERVICE_URL", "http://localhost:8000"),
 
+		WorkerHealthPort:   l.port("WORKER_HEALTH_PORT", 8081),
+		OutboxPollInterval: l.duration("OUTBOX_POLL_INTERVAL", time.Second),
+		OutboxBatchSize:    l.positiveInt("OUTBOX_BATCH_SIZE", 100),
+
 		FinancialExecutionEnabled: l.boolean("FINANCIAL_EXECUTION_ENABLED", false),
 	}
 
