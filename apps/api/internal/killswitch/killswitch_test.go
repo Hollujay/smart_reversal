@@ -381,3 +381,25 @@ func TestChangesAreAudited(t *testing.T) {
 		t.Errorf("attribution or chain wrong: %+v %+v", recs, res)
 	}
 }
+
+func TestAPolicyFreezeCoversAnActionWhosePolicyIsUnknown(t *testing.T) {
+	policy := State{Frozen: []Frozen{{Target: Target{Scope: ScopePolicy, Value: "reversal.FAIL001.NIP"}}}}
+	for name, tc := range map[string]struct {
+		a    Action
+		want bool
+	}{
+		"the named policy":              {Action{PolicyID: "reversal.FAIL001.NIP"}, true},
+		"another policy":                {Action{PolicyID: "reversal.FAIL001.CARD"}, false},
+		"no policy and not marked":      {Action{Rail: "NIP", ExceptionType: "FAIL001"}, false},
+		"policy unknown":                {Action{Rail: "NIP", PolicyUnknown: true}, true},
+		"unknown, with a mismatched id": {Action{PolicyID: "x", PolicyUnknown: true}, true},
+	} {
+		if got := policy.Covers(tc.a) != nil; got != tc.want {
+			t.Errorf("%s: covered=%v want %v", name, got, tc.want)
+		}
+	}
+	rail := State{Frozen: []Frozen{{Target: Target{Scope: ScopeRail, Value: "CARD"}}}}
+	if rail.Covers(Action{Rail: "NIP", PolicyUnknown: true}) != nil {
+		t.Error("an unknown policy must not make a rail freeze on another rail cover the action")
+	}
+}

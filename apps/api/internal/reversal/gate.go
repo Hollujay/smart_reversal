@@ -15,7 +15,6 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
-	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
@@ -259,7 +258,7 @@ func (s *Service) evaluate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, sub
 	case !pol.execEnabled:
 		add(6, false, "simulated reversal execution is not enabled by approved policy")
 	default:
-		if err := s.Kill.Check(ctx, tx, tenant, killswitch.Action{Rail: t.Rail, ExceptionType: sub.Case.Classification}); err != nil {
+		if err := s.Kill.Check(ctx, tx, tenant, actionFor(sub.Case.Classification, t.Rail)); err != nil {
 			add(6, false, err.Error())
 		} else {
 			auto = pol.autoEligible && pol.autoLimit != nil && t.Amount <= *pol.autoLimit

@@ -154,7 +154,7 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 	var out []AutoResult
 	heldNew, heldWaiting, started, advanced := 0, 0, 0, 0
 	for _, c := range candidates {
-		if st.Covers(killswitch.Action{Rail: c.rail, ExceptionType: c.class}) != nil {
+		if st.Covers(actionFor(c.class, c.rail)) != nil {
 			heldNew++
 			continue
 		}
@@ -166,7 +166,7 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 		out = append(out, r)
 	}
 	for _, w := range waiting {
-		if st.Covers(killswitch.Action{Rail: w.rail, ExceptionType: w.class}) != nil {
+		if st.Covers(actionFor(w.class, w.rail)) != nil {
 			heldWaiting++
 			continue
 		}
