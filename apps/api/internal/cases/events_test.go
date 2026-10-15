@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/events"
+	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
 )
 
 type stored struct {
@@ -122,4 +123,50 @@ func TestEveryTransitionEmitsOnceAndRejectedOrRolledBackMovesEmitNothing(t *test
 		t.Fatalf("expected two events, got %d", len(got))
 	}
 	_ = uuid.Nil
+}
+
+func TestRecordingANotificationEmitsOneEventWithoutItsTextAndADuplicateEmitsNone(t *testing.T) {
+	r := newRig(t)
+	c, _ := r.open(t, botCase(r.txn(t, "EV-NOTE-1"), CodeNoCredit))
+	ctx := context.Background()
+	msg := notify.CustomerDetected(1850000, "NGN", "EV-NOTE-1")
+
+	record := func(key string) (bool, error) {
+		var created bool
+		err := r.tx(t, func(tx pgx.Tx) error {
+			var err error
+			created, err = notify.Record(ctx, tx, r.tenant, c.ID, msg, key)
+			return err
+		})
+		return created, err
+	}
+	if created, err := record("k1"); err != nil || !created {
+		t.Fatalf("%v %v", created, err)
+	}
+	if created, err := record("k1"); err != nil || created {
+		t.Fatalf("a duplicate must record nothing: %v %v", created, err)
+	}
+	got := r.outbox(t, events.NotificationRecorded)
+	if len(got) != 1 {
+		t.Fatalf("expected one notification.recorded, got %d", len(got))
+	}
+	p := got[0].Payload
+	if p["audience"] != notify.Customer || p["stage"] != notify.StageDetected || p["template_id"] != msg.Template || p["case_id"] != c.ID.String() || p["notification_id"] == nil {
+		t.Fatalf("payload: %+v", p)
+	}
+	if _, ok := p["body"]; ok {
+		t.Fatal("the message text must not be in the event")
+	}
+
+	// A rolled back recording publishes nothing.
+	boom := errors.New("rolled back")
+	err := r.tx(t, func(tx pgx.Tx) error {
+		if _, err := notify.Record(ctx, tx, r.tenant, c.ID, msg, "k2"); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) || len(r.outbox(t, events.NotificationRecorded)) != 1 {
+		t.Fatalf("rollback: %v", err)
+	}
 }
