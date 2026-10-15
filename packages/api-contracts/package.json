@@ -5,7 +5,7 @@
   "description": "OpenAPI 3.1 specifications and shared API schemas for SMARTREVERSAL platform",
   "main": "openapi.yaml",
   "scripts": {
-    "lint": "echo 'Contracts validated'",
-    "validate": "echo 'Validating openapi.yaml...'"
+    "lint": "cd ../../apps/api && go test -count=1 ./internal/contract",
+    "validate": "cd ../../apps/api && go test -count=1 ./internal/contract"
   }
 }
