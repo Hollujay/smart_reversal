@@ -76,6 +76,10 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/calendar/business-time", o.Services.businessTime)
 					pr.Get("/calendar/next-cutoff", o.Services.nextCutoff)
 				}
+				if o.Services.KillSwitch != nil {
+					pr.Get("/killswitch", o.Services.getKillSwitch)
+					pr.Post("/killswitch", o.Services.changeKillSwitch)
+				}
 				if o.Services.Vault != nil {
 					pr.Post("/accounts/unmask", o.Services.unmask)
 				}
