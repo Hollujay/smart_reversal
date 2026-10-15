@@ -61,6 +61,8 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^calendar\.holiday\.[0-9]{4}-[0-9]{2}-[0-9]{2}$`), 0, 1, "flag", "1 marks a public holiday on that date, 0 marks a working day that would otherwise be off", false},
 	{regexp.MustCompile(`^calendar\.cutoff_minute\.[A-Z0-9_]{2,30}$`), 0, 1439, "minutes after midnight", "Daily cut-off for a rail, in the institution's local time", false},
 	{regexp.MustCompile(`^calendar\.settlement_lag_days\.[A-Z0-9_]{2,30}$`), 0, 10, "business days", "Business days between the cut-off date and settlement on a rail", false},
+	{regexp.MustCompile(`^reversal\.auto_eligible\.[A-Z]{3,4}[0-9]{3}$`), 0, 1, "flag", "1 lets automation reverse this exception type without a human approval, within the auto limit", false},
+	{regexp.MustCompile(`^reversal\.simulated_execution_enabled$`), 0, 1, "flag", "1 allows reversals to run against the SIMULATED provider. There is no live provider in this build", false},
 	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
 

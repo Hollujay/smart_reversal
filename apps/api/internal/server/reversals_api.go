@@ -1,0 +1,358 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
+	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+)
+
+type tracksJSON struct {
+	Accepted   string `json:"accepted"`
+	Processing string `json:"processing"`
+	Financial  string `json:"financial"`
+}
+
+type reversalJSON struct {
+	ID              string        `json:"id"`
+	ReversalRef     string        `json:"reversal_ref"`
+	CaseID          string        `json:"case_id"`
+	TxnID           string        `json:"txn_id"`
+	AmountMinor     string        `json:"amount_minor"`
+	Currency        string        `json:"currency"`
+	ReasonCode      string        `json:"reason_code"`
+	RequestedByType string        `json:"requested_by_type"`
+	ApprovalStatus  string        `json:"approval_status"`
+	ApprovalID      string        `json:"approval_id,omitempty"`
+	Tracks          tracksJSON    `json:"tracks"`
+	Gate            reversal.Gate `json:"gate"`
+	ProviderRef     string        `json:"provider_ref,omitempty"`
+	FailureReason   string        `json:"failure_reason,omitempty"`
+	SubmittedAt     *time.Time    `json:"submitted_at,omitempty"`
+	PostedAt        *time.Time    `json:"posted_at,omitempty"`
+	VerifiedAt      *time.Time    `json:"verified_at,omitempty"`
+	CreatedAt       time.Time     `json:"created_at"`
+	Simulated       bool          `json:"simulated"`
+}
+
+func toReversalJSON(r reversal.Reversal) reversalJSON {
+	out := reversalJSON{ID: r.ID.String(), ReversalRef: r.Ref, CaseID: r.CaseID.String(), TxnID: r.TxnID.String(),
+		AmountMinor: strconv.FormatInt(r.AmountMinor, 10), Currency: r.Currency, ReasonCode: r.ReasonCode, RequestedByType: r.RequestedByType,
+		ApprovalStatus: r.ApprovalStatus, Tracks: tracksJSON{r.AcceptedStatus, r.ProcessingStatus, r.FinancialStatus}, Gate: r.Gate,
+		ProviderRef: r.ProviderRef, FailureReason: r.FailureReason, SubmittedAt: r.SubmittedAt, PostedAt: r.PostedAt, VerifiedAt: r.VerifiedAt,
+		CreatedAt: r.CreatedAt, Simulated: true}
+	if r.ApprovalID != uuid.Nil {
+		out.ApprovalID = r.ApprovalID.String()
+	}
+	return out
+}
+
+// reversalSummary is a reversal as shown inside a case.
+type reversalSummary struct {
+	ID               string `json:"id"`
+	ReversalRef      string `json:"reversal_ref"`
+	ApprovalStatus   string `json:"approval_status"`
+	AcceptedStatus   string `json:"accepted_status"`
+	ProcessingStatus string `json:"processing_status"`
+	FinancialStatus  string `json:"financial_status"`
+}
+
+func (s *Services) reversalsForCase(r *http.Request, tx pgx.Tx, tenant, caseID uuid.UUID) ([]reversalSummary, error) {
+	out := []reversalSummary{}
+	if s.Reversal == nil {
+		return out, nil
+	}
+	list, err := s.Reversal.ForCase(r.Context(), tx, tenant, caseID)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range list {
+		out = append(out, reversalSummary{v.ID.String(), v.Ref, v.ApprovalStatus, v.AcceptedStatus, v.ProcessingStatus, v.FinancialStatus})
+	}
+	return out, nil
+}
+
+func authedPrincipal(r *http.Request) *identity.Principal { return identity.FromContext(r.Context()) }
+
+func writeReversalError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, reversal.ErrNotFound), errors.Is(err, cases.ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "not found")
+	case errors.Is(err, reversal.ErrKeyReuse):
+		httpx.WriteError(w, r, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", err.Error())
+	case errors.Is(err, reversal.ErrNotPending), errors.Is(err, reversal.ErrBadState):
+		httpx.WriteError(w, r, http.StatusConflict, httpx.CodeConflict, err.Error())
+	case errors.Is(err, authz.ErrMFARequired):
+		httpx.WriteError(w, r, http.StatusForbidden, "MFA_REQUIRED", "multi-factor authentication is required to approve a reversal")
+	case errors.Is(err, reversal.ErrSameActor):
+		httpx.WriteError(w, r, http.StatusForbidden, "SELF_APPROVAL", "you cannot approve a reversal you requested")
+	case errors.Is(err, authz.ErrConflictOfInterest):
+		httpx.WriteError(w, r, http.StatusForbidden, "CONFLICT_OF_INTEREST", "you are linked to an account involved and cannot approve this")
+	case errors.Is(err, authz.ErrForbidden):
+		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, "you may not do this, or the amount is over your approval limit")
+	case errors.Is(err, cases.ErrInvalid):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, httpx.CodeValidation, err.Error())
+	default:
+		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")
+	}
+}
+
+type reversalRequest struct {
+	CaseID      string   `json:"case_id"`
+	ReasonCode  string   `json:"reason_code"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
+type gateFailedBody struct {
+	Error        string             `json:"error"`
+	Message      string             `json:"message"`
+	FailedChecks []reversalCheckErr `json:"failed_checks"`
+	Gate         reversal.Gate      `json:"gate"`
+}
+
+type reversalCheckErr struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
+}
+
+// requestReversal serves POST /v1/reversals. It evaluates the eight checks. If
+// they pass it records the reversal and takes the remediation lock; a person's
+// request then waits for a different person to approve. Nothing is sent to the
+// provider here. If a check fails the answer is 409 with the failed checks and
+// nothing is created. A repeat with the same Idempotency-Key returns the same
+// reversal.
+func (s *Services) requestReversal(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := s.authorizeNoMFA(w, r, "request_reversal", authz.Attrs{})
+	if !ok {
+		return
+	}
+	key, err := httpx.IdempotencyKey(r)
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
+		return
+	}
+	var req reversalRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "body must be a JSON object with case_id and reason_code")
+		return
+	}
+	caseID, err := uuid.Parse(req.CaseID)
+	if err != nil { // a case reference is accepted as well
+		var c cases.Case
+		perr := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+			var e error
+			c, e = s.Cases.GetByRef(r.Context(), tx, p.TenantID, req.CaseID)
+			return e
+		})
+		if perr != nil {
+			httpx.WriteError(w, r, http.StatusUnprocessableEntity, httpx.CodeValidation, "case_id must be the id or reference of an existing case")
+			return
+		}
+		caseID = c.ID
+	}
+	prin := p
+	out, err := s.Reversal.Request(r.Context(), p.TenantID, reversal.RequestInput{CaseID: caseID, IdempotencyKey: key,
+		ReasonCode: req.ReasonCode, Who: reversal.Requester{Principal: &prin}})
+	if err != nil {
+		writeReversalError(w, r, err)
+		return
+	}
+	if out.Blocked {
+		body := gateFailedBody{Error: "GATE_FAILED", Message: "one or more reversal checks failed; nothing was done", Gate: out.Gate}
+		for _, c := range out.Gate.Failed() {
+			body.FailedChecks = append(body.FailedChecks, reversalCheckErr{c.ID, c.Name, c.Detail})
+		}
+		httpx.WriteJSON(w, http.StatusConflict, body)
+		return
+	}
+	code := http.StatusAccepted
+	if out.Existing {
+		code = http.StatusOK
+	}
+	httpx.WriteJSON(w, code, toReversalJSON(out.Reversal))
+}
+
+// getReversal serves GET /v1/reversals/{id}: the three tracks, separately.
+func (s *Services) getReversal(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.canReadQueue(w, r)
+	if !ok {
+		return
+	}
+	var rev reversal.Reversal
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		var e error
+		rev, e = s.Reversal.Get(r.Context(), tx, p.TenantID, pathParam(r, "id"))
+		return e
+	})
+	if err != nil {
+		writeReversalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toReversalJSON(rev))
+}
+
+type decisionBody struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// decideApproval serves POST /v1/approvals/{id}/decision. Approving needs the
+// approve_reversal grant within the caller's limit, an MFA-backed token, and a
+// caller who is not the requester. An approval then carries the reversal out
+// against the simulated provider and verifies it against the ledger.
+func (s *Services) decideApproval(w http.ResponseWriter, r *http.Request) {
+	p := authedPrincipal(r)
+	if p == nil {
+		unauthorized(w, r)
+		return
+	}
+	id, err := uuid.Parse(pathParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "not found")
+		return
+	}
+	var body decisionBody
+	if err := httpx.DecodeJSON(w, r, &body); err != nil || (body.Decision != "approved" && body.Decision != "rejected") {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "body must be a JSON object with decision (approved or rejected) and reason")
+		return
+	}
+	rev, err := s.Reversal.Decide(r.Context(), p.TenantID, p, id, body.Decision == "approved", body.Reason)
+	if err != nil {
+		writeReversalError(w, r, err)
+		return
+	}
+	if body.Decision == "approved" {
+		if rev, err = s.Reversal.Execute(r.Context(), p.TenantID, rev.ID); err != nil {
+			writeReversalError(w, r, err)
+			return
+		}
+		if rev, err = s.Reversal.Advance(r.Context(), p.TenantID, rev.ID); err != nil {
+			writeReversalError(w, r, err)
+			return
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, toReversalJSON(rev))
+}
+
+// advanceReversal serves POST /v1/reversals/{id}/advance: ask the provider where
+// it stands and verify against the ledger when it says done. Safe to repeat.
+func (s *Services) advanceReversal(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := s.authorizeNoMFA(w, r, "request_reversal", authz.Attrs{})
+	if !ok {
+		return
+	}
+	var rev reversal.Reversal
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		var e error
+		rev, e = s.Reversal.Get(r.Context(), tx, p.TenantID, pathParam(r, "id"))
+		return e
+	})
+	if err == nil {
+		rev, err = s.Reversal.Advance(r.Context(), p.TenantID, rev.ID)
+	}
+	if err != nil {
+		writeReversalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toReversalJSON(rev))
+}
+
+// reversalEligibility serves GET /v1/cases/{id}/reversal-eligibility: the eight
+// checks as they stand now, with nothing changed.
+func (s *Services) reversalEligibility(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := s.authorizeNoMFA(w, r, "request_reversal", authz.Attrs{})
+	if !ok {
+		return
+	}
+	prin := p
+	var g reversal.Gate
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		c, e := s.resolveCase(r, tx, p.TenantID, pathParam(r, "id"))
+		if e != nil {
+			return e
+		}
+		g, e = s.Reversal.Assess(r.Context(), tx, p.TenantID, c.ID, reversal.Requester{Principal: &prin})
+		return e
+	})
+	if err != nil {
+		writeReversalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, g)
+}
+
+type approvalJSON struct {
+	ApprovalID string       `json:"approval_id"`
+	Status     string       `json:"status"`
+	Reason     string       `json:"reason"`
+	CreatedAt  time.Time    `json:"created_at"`
+	CaseRef    string       `json:"case_ref"`
+	Reversal   reversalJSON `json:"reversal"`
+	Simulated  bool         `json:"simulated"`
+}
+
+// listApprovals serves GET /v1/approvals, the approval queue.
+func (s *Services) listApprovals(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.canReadQueue(w, r)
+	if !ok {
+		return
+	}
+	status := strings.ToUpper(r.URL.Query().Get("status"))
+	if status == "" {
+		status = "PENDING"
+	}
+	if status != "PENDING" && status != "APPROVED" && status != "REJECTED" {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "status must be PENDING, APPROVED or REJECTED")
+		return
+	}
+	items := []approvalJSON{}
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.Context(), `SELECT a.id, a.status, a.reason, a.created_at, r.id, c.case_ref FROM approvals a
+			JOIN reversals r ON r.tenant_id = a.tenant_id AND r.id = a.reversal_id JOIN cases c ON c.tenant_id = r.tenant_id AND c.id = r.case_id
+			WHERE a.status = $1 ORDER BY a.created_at LIMIT 200`, status)
+		if err != nil {
+			return err
+		}
+		type row struct {
+			a     approvalJSON
+			revID uuid.UUID
+		}
+		var list []row
+		for rows.Next() {
+			var x row
+			var aid uuid.UUID
+			if err := rows.Scan(&aid, &x.a.Status, &x.a.Reason, &x.a.CreatedAt, &x.revID, &x.a.CaseRef); err != nil {
+				rows.Close()
+				return err
+			}
+			x.a.ApprovalID, x.a.Simulated = aid.String(), true
+			list = append(list, x)
+		}
+		rows.Close()
+		for _, x := range list {
+			rev, err := s.Reversal.Get(r.Context(), tx, p.TenantID, x.revID.String())
+			if err != nil {
+				return err
+			}
+			x.a.Reversal = toReversalJSON(rev)
+			items = append(items, x.a)
+		}
+		return nil
+	})
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}

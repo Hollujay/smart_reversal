@@ -11,12 +11,16 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
+	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
 // routerOperations lists "METHOD /path" for every route the real router serves.
@@ -27,7 +31,8 @@ func routerOperations(t *testing.T) map[string]bool {
 		// A non-nil authenticator mounts the login route.
 		Auth: &identity.Authenticator{},
 		// Non-nil services mount the routes that need a database and a policy.
-		Services: &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}, Config: &configsvc.Service{}, KillSwitch: &killswitch.Service{}},
+		Services:        &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}, Config: &configsvc.Service{}, KillSwitch: &killswitch.Service{}, Txn: &txn.Service{}, Cases: &cases.Service{}, Reversal: &reversal.Service{}},
+		ServiceVerifier: &servauth.Verifier{},
 	})
 	routes, ok := h.(chi.Routes)
 	if !ok {
@@ -95,7 +100,7 @@ func TestNoPlannedOperationIsAlreadyServed(t *testing.T) {
 // Guards against the comparisons above passing because both sides are empty.
 func TestRouteDiscoveryFindsKnownRoutes(t *testing.T) {
 	served := routerOperations(t)
-	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask", "GET /v1/config/{key}", "POST /v1/config/{key}/versions/{version}/decision", "GET /v1/calendar/next-cutoff", "GET /v1/killswitch", "POST /v1/killswitch"} {
+	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask", "GET /v1/config/{key}", "POST /v1/config/{key}/versions/{version}/decision", "GET /v1/calendar/next-cutoff", "GET /v1/killswitch", "POST /v1/killswitch", "POST /v1/events", "GET /v1/transactions", "GET /v1/transactions/{id}", "GET /v1/exceptions", "GET /v1/cases/{id}", "PATCH /v1/cases/{id}", "POST /v1/complaints", "POST /v1/reversals", "GET /v1/reversals/{id}", "POST /v1/approvals/{id}/decision", "GET /v1/approvals", "GET /v1/reconciliation/reversals", "GET /v1/reports/summary", "GET /v1/cases/{id}/reversal-eligibility"} {
 		if !served[want] {
 			t.Errorf("route discovery did not find %s; found %v", want, served)
 		}

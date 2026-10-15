@@ -116,60 +116,89 @@ paths:
       operationId: ingestEvent
       summary: Ingest a transaction event
       description: |
-        At-least-once safe. The same key and payload returns 200. The same key
-        with a different payload returns 409. A schema error returns 422 and the
-        event goes to the dead-letter stream with the reason.
-      x-status: planned
-      x-phase: B2
+        Called by a source system (or the simulator) with a service assertion that
+        holds the `events:write` scope. The tenant comes from the service account.
+        `Idempotency-Key` must equal `source_event_ref`.
+
+        202 accepted. 200 an exact repeat (nothing changes). 409 the reference was
+        reused with different content. 422 the event is invalid or contradicts the
+        transaction it refers to; it is quarantined. Amounts are decimal strings of
+        minor units. Account numbers are never accepted, only account tokens.
+      x-status: implemented
+      security: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - name: X-Schema-Version
-          in: header
-          required: true
-          schema: { type: string, example: '1.2' }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/EventEnvelope' }
+            schema: { $ref: '#/components/schemas/TransactionEvent' }
       responses:
-        '200': { description: Duplicate of an event already accepted. }
-        '202': { description: Accepted and queued. }
+        '200':
+          description: Exact repeat of an event already accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAccepted' }
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
-        '429': { $ref: '#/components/responses/RateLimited' }
 
   /v1/transactions:
     get:
       tags: [Transactions]
       operationId: searchTransactions
-      summary: Search transactions
-      description: Masked by default. Cursor pagination.
-      x-status: planned
-      x-phase: B2
+      summary: List transactions, newest activity first
+      description: Needs the `view_exception_queue` grant with `full` or `metadata` scope.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - { name: state, in: query, schema: { type: string, enum: [INITIATED, DEBITED, PENDING, CONFIRMED_SUCCESS, CONFIRMED_FAILURE, UNKNOWN, CONFLICTING, REVERSED] } }
+        - { name: rail, in: query, schema: { type: string } }
         - { name: reference, in: query, schema: { type: string } }
-        - { name: channel, in: query, schema: { type: string } }
-        - { name: status, in: query, schema: { type: string } }
       responses:
-        '200': { $ref: '#/components/responses/PlannedPage' }
+        '200':
+          description: A page of transactions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /v1/transactions/{id}:
     get:
       tags: [Transactions]
       operationId: getTransaction
-      summary: Transaction detail with timeline, evidence and source freshness
-      x-status: planned
-      x-phase: B2
+      summary: A transaction with its event timeline
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The transaction and its events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transaction, events]
+                properties:
+                  transaction: { $ref: '#/components/schemas/Transaction' }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/TransactionEventRecord' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -178,94 +207,201 @@ paths:
     get:
       tags: [Cases]
       operationId: listExceptions
-      summary: Exception queue
-      description: Sort by priority score, age, amount or SLA.
-      x-status: planned
-      x-phase: B3
+      summary: The shared exception queue
+      description: |
+        Detected and customer-reported cases in one queue, highest priority first,
+        then oldest. Filters: `status`, `classification` (DUP001, FAIL001, UNK001,
+        REV001, STL001, CUS001), `source` (bot, customer, manual) and `txn_id`.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - { name: status, in: query, schema: { type: string } }
+        - { name: classification, in: query, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [bot, customer, manual] } }
+        - { name: txn_id, in: query, schema: { type: string, format: uuid } }
       responses:
-        '200': { $ref: '#/components/responses/PlannedPage' }
+        '200':
+          description: A page of cases.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Case' }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /v1/cases:
-    post:
-      tags: [Cases]
-      operationId: createCase
-      summary: Create a case (manual or from a complaint)
-      x-status: planned
-      x-phase: B4
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
-      responses:
-        '201': { $ref: '#/components/responses/PlannedObject' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
   /v1/cases/{id}:
     get:
       tags: [Cases]
       operationId: getCase
-      summary: Case detail
-      x-status: planned
-      x-phase: B4
+      summary: A case with its evidence, history, transaction, notifications and reversals
+      description: '`id` is the case UUID or its reference such as CASE-2026-000012.'
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [Cases]
       operationId: updateCase
-      summary: Update state, owner or notes
-      description: Transition is validated and a reason code is required.
-      x-status: planned
-      x-phase: B4
+      summary: Move a case to a new status, or assign it
+      description: |
+        `If-Match` carries the `version` the caller read (412 when stale, 428 when
+        missing). The move must be allowed by the state machine (409
+        `BAD_TRANSITION`) and needs a `reason_code`. REMEDIATION_SUBMITTED,
+        OUTCOME_VERIFICATION, RESOLVED and REMEDIATION_FAILED cannot be set here:
+        they claim a fact about money and are set only by the reversal workflow.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
-        - $ref: '#/components/parameters/IfMatch'
+        - { name: If-Match, in: header, required: true, schema: { type: string }, description: 'The case version, for example "3".' }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+                reason_code: { type: string }
+                owner_id: { type: string, format: uuid }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The updated case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '412': { $ref: '#/components/responses/PreconditionFailed' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '428': { description: If-Match is required. }
+
+  /v1/cases/{id}/notes:
+    post:
+      tags: [Cases]
+      operationId: addCaseNote
+      summary: Add a note to the case history
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/cases/{id}/evidence:
+    post:
+      tags: [Cases]
+      operationId: addCaseEvidence
+      summary: Attach evidence to a case
+      description: Evidence added by a person is recorded with `is_fact` false.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, ref]
+              properties:
+                kind: { type: string }
+                ref: { type: string }
+                source_system: { type: string }
+                detail: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/cases/{id}/customer-status:
+    get:
+      tags: [Cases]
+      operationId: getCustomerStatus
+      summary: What the customer may be told about a case
+      description: |
+        A two-stage message set. It says funds were returned only after the outcome
+        has been independently verified (`outcome_verified` is true).
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: Customer-safe status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/complaints:
     post:
       tags: [Cases]
       operationId: createComplaint
-      summary: Complaint intake and match
-      description: Returns a matched case or creates a new customer-reported case.
-      x-status: planned
-      x-phase: B4
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      summary: Record a customer complaint (customer-reported path, CUS001)
+      description: |
+        An agent or operator enters what the customer reports. It is matched to a
+        transaction by `instruction_ref`. If the detector already opened a case for
+        that transaction the complaint joins it (200). Otherwise a CUS001 case is
+        opened on the same queue (201), unmatched when no transaction is found. A
+        complaint alone never triggers money movement.
+      x-status: implemented
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              required: [text]
+              properties:
+                instruction_ref: { type: string }
+                text: { type: string, minLength: 5, maxLength: 2000 }
+                contact_ref: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
-        '201': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: Joined an existing case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComplaintResult' }
+        '201':
+          description: New customer-reported case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComplaintResult' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
@@ -274,16 +410,17 @@ paths:
     post:
       tags: [Reversals]
       operationId: requestReversal
-      summary: Request a reversal
+      summary: Request a reversal for a case
       description: |
-        Runs the eight-check gate. Returns 202 when all eight pass, 409 with the
-        failed checks otherwise, and 403 when the caller lacks authority. A
-        timeout means the outcome is UNKNOWN. Query status with the same key and
-        never create a new key for the same debit.
+        Runs the eight-check gate. Returns 202 when all eight pass and the request
+        is recorded (a person's request then waits for a different approver), 200
+        when the Idempotency-Key already has a reversal, and 409 `GATE_FAILED`
+        with the failed checks when a check fails, in which case nothing is
+        created. An unknown, pending or conflicting transaction outcome always
+        fails the gate. Nothing is sent to the provider by this call.
 
-        All financial execution is simulated in Track H.
-      x-status: planned
-      x-phase: B5
+        All financial execution is simulated. Responses carry `simulated: true`.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -292,15 +429,21 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ReversalRequest' }
       responses:
-        '202':
-          description: Gate passed and the request is accepted. Not a completed refund.
+        '200':
+          description: The key already had a reversal; it is returned unchanged.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReversalAccepted' }
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '202':
+          description: Gate passed and the request is recorded. Not a completed refund.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '400': { description: Missing Idempotency-Key or malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: Gate failed, or the key was reused with a different payload.
+          description: Gate failed (`GATE_FAILED`), or the key was reused for a different request (`IDEMPOTENCY_KEY_REUSED`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GateFailedError' }
@@ -310,9 +453,8 @@ paths:
       tags: [Reversals]
       operationId: getReversal
       summary: Reversal status
-      description: Returns the accepted, processing and financial tracks separately.
-      x-status: planned
-      x-phase: B5
+      description: Returns the accepted, processing and financial tracks separately. `id` may be the reversal reference.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
@@ -320,33 +462,164 @@ paths:
           description: Current status.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReversalStatus' }
+              schema: { $ref: '#/components/schemas/Reversal' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-
+  /v1/reversals/{id}/advance:
+    post:
+      tags: [Reversals]
+      operationId: advanceReversal
+      summary: Ask the provider where a submitted reversal stands and verify it
+      description: |
+        Polls the (simulated) provider. When it reports done, the backend checks
+        the ledger independently. Only then does the financial track become
+        VERIFIED and the case resolve. Safe to repeat.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: Current status after the poll.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/cases/{id}/reversal-eligibility:
+    get:
+      tags: [Reversals]
+      operationId: getReversalEligibility
+      summary: The eight checks for a case as they stand now
+      description: Read-only. Verdict is PASS_AUTO, PASS_NEEDS_APPROVAL or BLOCKED.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: The gate result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Gate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/approvals:
+    get:
+      tags: [Reversals]
+      operationId: listApprovals
+      summary: The approval queue
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [PENDING, APPROVED, REJECTED], default: PENDING } }
+      responses:
+        '200':
+          description: Approvals with their reversals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+        '400': { description: Bad status. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /v1/approvals/{id}/decision:
     post:
       tags: [Reversals]
       operationId: decideApproval
-      summary: Approve or reject
-      description: The maker cannot decide. A reason is mandatory on rejection.
-      x-status: planned
-      x-phase: B5
+      summary: Approve or reject a reversal
+      description: |
+        Needs the approve_reversal grant within the caller's limit and an
+        MFA-backed token. The requester cannot approve (`SELF_APPROVAL`), nor
+        someone linked to the accounts (`CONFLICT_OF_INTEREST`). A reason is
+        mandatory on rejection. Approving carries the reversal out against the
+        simulated provider and verifies it against the ledger before returning.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                reason: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The reversal after the decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/reconciliation/reversals:
+    get:
+      tags: [Reversals]
+      operationId: reconcileReversals
+      summary: Compare recorded reversals with the ledger
+      description: |
+        Each reversal is MATCHED, AMOUNT_MISMATCH, MISSING_POSTING,
+        POSTED_NOT_VERIFIED, IN_FLIGHT or NOT_SUBMITTED. Ledger credits that no
+        reversal accounts for are listed as ORPHAN_POSTING. The ledger is
+        synthetic (`simulated: true`).
+      x-status: implemented
+      responses:
+        '200':
+          description: Reconciliation rows and counts by result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, counts, simulated]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reversal_ref: { type: string }
+                        instruction_ref: { type: string }
+                        amount_minor: { type: string }
+                        ledger_amount_minor: { type: string }
+                        currency: { type: string }
+                        financial_status: { type: string }
+                        result: { type: string }
+                  counts: { type: object, additionalProperties: { type: integer } }
+                  simulated: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/reports/summary:
+    get:
+      tags: [Reversals]
+      operationId: getSummaryReport
+      summary: Dashboard numbers
+      description: |
+        Counts by transaction state, case status and classification, reversal
+        tracks, verified value (decimal string of minor units), the share of
+        verified reversals that automation carried out, and average seconds from
+        opening to resolution. Everything here is simulated demonstration data.
+      x-status: implemented
+      responses:
+        '200':
+          description: Summary figures.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /v1/audit:
     get:
@@ -774,7 +1047,9 @@ components:
                 required: [id, detail]
                 properties:
                   id: { type: integer, minimum: 1, maximum: 8 }
+                  name: { type: string }
                   detail: { type: string }
+            gate: { $ref: '#/components/schemas/Gate' }
     Health:
       type: object
       required: [status, service, version]
@@ -799,6 +1074,12 @@ components:
         institution: { type: string, example: DEMO-BANK }
         email: { type: string }
         password: { type: string, format: password }
+        otp:
+          type: string
+          description: |
+            Six-digit code from the development authenticator (synthetic, ADR 0003 D20).
+            Only a login with a valid, unused code gets a token with `mfa: true`, which
+            approving a reversal requires. A wrong code fails the login.
     LoginResponse:
       type: object
       required: [access_token, token_type, expires_at, user_id, roles]
@@ -810,6 +1091,7 @@ components:
         roles:
           type: array
           items: { type: string }
+        mfa: { type: boolean, description: True only when a valid one-time code was supplied. }
     Me:
       type: object
       required: [user_id, tenant_id, roles, mfa, expires_at]
@@ -1004,47 +1286,191 @@ components:
           type: string
           pattern: '^[A-Z]{3}$'
           example: NGN
-    EventEnvelope:
+    TransactionEvent:
       type: object
-      required: [institution_id, source_system, source_event_ref, event_type, source_ts, txn, raw_payload_hash]
+      required: [source_system, source_event_ref, event_type, source_ts, txn]
       properties:
-        institution_id: { type: string, example: INST-DEMO-01 }
         source_system: { type: string, example: SWITCH_A }
-        source_event_ref: { type: string, example: SW-20261014-000184233 }
-        event_type: { type: string, example: TRANSFER_RESPONSE_TIMEOUT }
+        source_event_ref: { type: string, example: SW-20261015-000184233 }
+        event_type:
+          type: string
+          description: Illustrative names; real adapters map their own codes onto these (VERIFY).
+          enum: [DEBIT_POSTED, TRANSFER_SENT, CREDIT_CONFIRMED, CREDIT_FAILED, TRANSFER_RESPONSE_TIMEOUT, SETTLEMENT_COMPLETED, REVERSAL_POSTED]
         source_ts: { type: string, format: date-time }
         txn:
           type: object
           required: [instruction_ref, channel, rail, amount_minor, currency, debit_account_token]
           properties:
             instruction_ref: { type: string }
-            channel: { type: string, example: MOBILE }
+            channel: { type: string, enum: [MOBILE, INTERNET, USSD, POS, ATM, CARD, GATEWAY, MERCHANT, API] }
             rail: { type: string, example: NIP }
-            amount_minor: { type: integer, format: int64 }
-            currency: { type: string, pattern: '^[A-Z]{3}$' }
-            debit_account_token:
-              type: string
-              description: Tokenised account reference. Raw account numbers are not accepted.
-        refs:
+            amount_minor: { type: string, pattern: '^[1-9][0-9]{0,15}$', description: 'Minor units as a decimal string.', example: '1850000' }
+            currency: { type: string, pattern: '^[A-Z]{3}$', example: NGN }
+            debit_account_token: { type: string, pattern: '^acct_[0-9a-f]{32}$' }
+            beneficiary_bank: { type: string }
+            beneficiary_token: { type: string, pattern: '^acct_[0-9a-f]{32}$' }
+            session_id: { type: string }
+    EventAccepted:
+      type: object
+      required: [event_id, txn_id, lifecycle_state, duplicate]
+      properties:
+        event_id: { type: string, format: uuid }
+        txn_id: { type: string, format: uuid }
+        lifecycle_state: { type: string }
+        duplicate: { type: boolean }
+    Case:
+      type: object
+      required: [id, case_ref, classification, status, priority, source, queue, opened_at, version, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        case_ref: { type: string, example: CASE-2026-000012 }
+        classification: { type: string, example: FAIL001 }
+        status: { type: string }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        risk_grade: { type: string }
+        source: { type: string, enum: [bot, customer, manual] }
+        txn_id: { type: string, format: uuid }
+        exposure_minor: { type: string }
+        currency: { type: string }
+        root_cause: { type: string }
+        owner_id: { type: string, format: uuid }
+        queue: { type: string }
+        rule_id: { type: string }
+        rule_version: { type: string }
+        regulatory_clock: { type: string }
+        opened_at: { type: string, format: date-time }
+        sla_due_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        closed_reason: { type: string }
+        version: { type: integer }
+        simulated: { type: boolean }
+    CaseEvidence:
+      type: object
+      required: [id, kind, ref, fetched_at, is_fact]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, example: transaction_event }
+        ref: { type: string }
+        source_system: { type: string }
+        fetched_at: { type: string, format: date-time }
+        hash: { type: string }
+        is_fact: { type: boolean }
+        detail: { type: object, additionalProperties: true }
+    CaseEvent:
+      type: object
+      required: [seq, at, actor_type, kind]
+      properties:
+        seq: { type: integer }
+        at: { type: string, format: date-time }
+        actor_type: { type: string }
+        actor_id: { type: string }
+        kind: { type: string }
+        from_status: { type: string }
+        to_status: { type: string }
+        reason_code: { type: string }
+        detail: { type: object, additionalProperties: true }
+    Notification:
+      type: object
+      required: [id, audience, stage, template_id, body, status, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        audience: { type: string, enum: [customer, operations] }
+        stage: { type: string, enum: [detected, verified, alert] }
+        template_id: { type: string }
+        body: { type: string }
+        status: { type: string }
+        simulated: { type: boolean }
+        created_at: { type: string }
+    ReversalSummary:
+      type: object
+      properties:
+        id: { type: string }
+        accepted_status: { type: string }
+        processing_status: { type: string }
+        financial_status: { type: string }
+    CaseDetail:
+      type: object
+      required: [case, evidence, history, notifications, reversals]
+      properties:
+        case: { $ref: '#/components/schemas/Case' }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/CaseEvidence' }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/CaseEvent' }
+        transaction: { $ref: '#/components/schemas/Transaction' }
+        notifications:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        reversals:
+          type: array
+          items: { $ref: '#/components/schemas/ReversalSummary' }
+    CustomerStatus:
+      type: object
+      required: [case_ref, stage, headline, outcome_verified, timeline, messages, simulated]
+      properties:
+        case_ref: { type: string }
+        stage: { type: string, enum: [investigating, reversal_in_progress, resolved, closed] }
+        headline: { type: string }
+        outcome_verified: { type: boolean }
+        regulatory_deadline: { type: string, format: date-time }
+        timeline:
           type: array
           items:
             type: object
-            required: [type, value]
+            required: [at, label]
             properties:
-              type: { type: string, example: SESSION_ID }
-              value: { type: string }
-        raw_payload_hash: { type: string, example: 'sha256:7c1e' }
+              at: { type: string, format: date-time }
+              label: { type: string }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        simulated: { type: boolean }
+    ComplaintResult:
+      type: object
+      required: [case, matched_existing_case, linked_to_transaction]
+      properties:
+        case: { $ref: '#/components/schemas/Case' }
+        matched_existing_case: { type: boolean }
+        linked_to_transaction: { type: boolean }
+    Transaction:
+      type: object
+      required: [id, instruction_ref, channel, rail, amount_minor, currency, debit_account_token, lifecycle_state, debit_status, credit_status, settlement_status, reversal_status, first_event_at, last_event_at, event_count, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        instruction_ref: { type: string }
+        channel: { type: string }
+        rail: { type: string }
+        amount_minor: { type: string, example: '1850000' }
+        currency: { type: string }
+        debit_account_token: { type: string }
+        beneficiary_bank: { type: string }
+        session_id: { type: string }
+        lifecycle_state: { type: string, enum: [INITIATED, DEBITED, PENDING, CONFIRMED_SUCCESS, CONFIRMED_FAILURE, UNKNOWN, CONFLICTING, REVERSED] }
+        debit_status: { type: string }
+        credit_status: { type: string }
+        settlement_status: { type: string }
+        reversal_status: { type: string }
+        first_event_at: { type: string, format: date-time }
+        last_event_at: { type: string, format: date-time }
+        event_count: { type: integer }
+        simulated: { type: boolean, description: 'Always true in this build.' }
+    TransactionEventRecord:
+      type: object
+      required: [id, source_system, source_event_ref, event_type, source_ts]
+      properties:
+        id: { type: string, format: uuid }
+        source_system: { type: string }
+        source_event_ref: { type: string }
+        event_type: { type: string }
+        source_ts: { type: string, format: date-time }
     ReversalRequest:
       type: object
-      required: [txn_id, case_id, reason_code, evidence_ids]
+      required: [case_id, reason_code]
       properties:
-        txn_id: { type: string, example: TXN-0001842 }
-        case_id: { type: string, example: CASE-2026-004417 }
-        reason_code: { type: string, example: DEBIT_NO_CREDIT_CONFIRMED_FAILED }
-        evidence_ids:
-          type: array
-          minItems: 1
-          items: { type: string }
+        case_id: { type: string, description: Case id or reference, example: CASE-2026-000012 }
+        reason_code: { type: string, example: CONFIRMED_FAILED_CREDIT }
     ReversalTracks:
       type: object
       required: [accepted, processing, financial]
@@ -1052,26 +1478,57 @@ components:
         Three separate tracks. An acknowledgement is not proof of posting.
         `financial` becomes VERIFIED only after the ledger confirms the posting.
       properties:
-        accepted: { type: string, example: PENDING }
-        processing: { type: string, example: NOT_STARTED }
-        financial: { type: string, example: UNVERIFIED }
-    ReversalAccepted:
+        accepted: { type: string }
+        processing: { type: string }
+        financial: { type: string }
+    GateCheck:
       type: object
-      required: [reversal_id, gate, tracks, simulated]
       properties:
-        reversal_id: { type: string, example: RV-000921 }
-        gate:
-          type: object
-          required: [checks_passed, policy_version]
-          properties:
-            checks_passed: { type: integer, enum: [8] }
-            policy_version: { type: string, example: P-NIPREV-3.2 }
+        id: { type: integer, minimum: 1, maximum: 8 }
+        name: { type: string }
+        passed: { type: boolean }
+        detail: { type: string }
+    Gate:
+      type: object
+      required: [verdict, checks]
+      properties:
+        verdict: { type: string, enum: [PASS_AUTO, PASS_NEEDS_APPROVAL, BLOCKED] }
+        checks: { type: array, items: { $ref: '#/components/schemas/GateCheck' } }
+        approval_reason: { type: string }
+        policy_version: { type: string }
+        evaluated_at: { type: string }
+        status_outcome: { type: string }
+        status_evidence: { type: string }
+    Reversal:
+      type: object
+      required: [id, reversal_ref, case_id, txn_id, amount_minor, currency, approval_status, tracks, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        reversal_ref: { type: string }
+        case_id: { type: string, format: uuid }
+        txn_id: { type: string, format: uuid }
+        amount_minor: { type: string, description: Decimal string of minor units. }
+        currency: { type: string }
+        reason_code: { type: string }
+        requested_by_type: { type: string, enum: [user, system] }
+        approval_status: { type: string }
+        approval_id: { type: string, format: uuid }
         tracks: { $ref: '#/components/schemas/ReversalTracks' }
+        gate: { $ref: '#/components/schemas/Gate' }
+        provider_ref: { type: string }
+        failure_reason: { type: string }
+        submitted_at: { type: string, format: date-time }
+        posted_at: { type: string, format: date-time }
+        verified_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
         simulated: { type: boolean }
-    ReversalStatus:
+    Approval:
       type: object
-      required: [reversal_id, tracks, simulated]
       properties:
-        reversal_id: { type: string }
-        tracks: { $ref: '#/components/schemas/ReversalTracks' }
+        approval_id: { type: string, format: uuid }
+        status: { type: string }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        case_ref: { type: string }
+        reversal: { $ref: '#/components/schemas/Reversal' }
         simulated: { type: boolean }

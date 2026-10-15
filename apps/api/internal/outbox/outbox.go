@@ -78,3 +78,31 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) (uuid.UUID, error) {
 	}
 	return e.ID, nil
 }
+
+// EnqueueOnce is Enqueue for an event with a caller-chosen, stable id. If an
+// event with that id already exists nothing is stored and false is returned.
+// It lets a repeated request avoid repeating the event it already produced.
+func EnqueueOnce(ctx context.Context, tx pgx.Tx, e Event) (bool, error) {
+	if e.ID == uuid.Nil {
+		return false, errors.New("outbox: a stable event id is required")
+	}
+	if err := e.Validate(); err != nil {
+		return false, err
+	}
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		return false, fmt.Errorf("outbox: marshal payload: %w", err)
+	}
+	if string(payload) == "null" {
+		return false, errors.New("outbox: payload is required")
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO outbox_events (tenant_id, event_id, stream, event_type, aggregate_id, payload, trace_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (event_id) DO NOTHING`,
+		e.TenantID, e.ID, e.Stream, e.Type, e.AggregateID, payload, e.TraceID)
+	if err != nil {
+		return false, fmt.Errorf("outbox: insert: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
