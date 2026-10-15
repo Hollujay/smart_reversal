@@ -207,94 +207,201 @@ paths:
     get:
       tags: [Cases]
       operationId: listExceptions
-      summary: Exception queue
-      description: Sort by priority score, age, amount or SLA.
-      x-status: planned
-      x-phase: B3
+      summary: The shared exception queue
+      description: |
+        Detected and customer-reported cases in one queue, highest priority first,
+        then oldest. Filters: `status`, `classification` (DUP001, FAIL001, UNK001,
+        REV001, STL001, CUS001), `source` (bot, customer, manual) and `txn_id`.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - { name: status, in: query, schema: { type: string } }
+        - { name: classification, in: query, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [bot, customer, manual] } }
+        - { name: txn_id, in: query, schema: { type: string, format: uuid } }
       responses:
-        '200': { $ref: '#/components/responses/PlannedPage' }
+        '200':
+          description: A page of cases.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Case' }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /v1/cases:
-    post:
-      tags: [Cases]
-      operationId: createCase
-      summary: Create a case (manual or from a complaint)
-      x-status: planned
-      x-phase: B4
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
-      responses:
-        '201': { $ref: '#/components/responses/PlannedObject' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
   /v1/cases/{id}:
     get:
       tags: [Cases]
       operationId: getCase
-      summary: Case detail
-      x-status: planned
-      x-phase: B4
+      summary: A case with its evidence, history, transaction, notifications and reversals
+      description: '`id` is the case UUID or its reference such as CASE-2026-000012.'
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [Cases]
       operationId: updateCase
-      summary: Update state, owner or notes
-      description: Transition is validated and a reason code is required.
-      x-status: planned
-      x-phase: B4
+      summary: Move a case to a new status, or assign it
+      description: |
+        `If-Match` carries the `version` the caller read (412 when stale, 428 when
+        missing). The move must be allowed by the state machine (409
+        `BAD_TRANSITION`) and needs a `reason_code`. REMEDIATION_SUBMITTED,
+        OUTCOME_VERIFICATION, RESOLVED and REMEDIATION_FAILED cannot be set here:
+        they claim a fact about money and are set only by the reversal workflow.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
-        - $ref: '#/components/parameters/IfMatch'
+        - { name: If-Match, in: header, required: true, schema: { type: string }, description: 'The case version, for example "3".' }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+                reason_code: { type: string }
+                owner_id: { type: string, format: uuid }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The updated case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '412': { $ref: '#/components/responses/PreconditionFailed' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '428': { description: If-Match is required. }
+
+  /v1/cases/{id}/notes:
+    post:
+      tags: [Cases]
+      operationId: addCaseNote
+      summary: Add a note to the case history
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/cases/{id}/evidence:
+    post:
+      tags: [Cases]
+      operationId: addCaseEvidence
+      summary: Attach evidence to a case
+      description: Evidence added by a person is recorded with `is_fact` false.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, ref]
+              properties:
+                kind: { type: string }
+                ref: { type: string }
+                source_system: { type: string }
+                detail: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/cases/{id}/customer-status:
+    get:
+      tags: [Cases]
+      operationId: getCustomerStatus
+      summary: What the customer may be told about a case
+      description: |
+        A two-stage message set. It says funds were returned only after the outcome
+        has been independently verified (`outcome_verified` is true).
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: Customer-safe status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/complaints:
     post:
       tags: [Cases]
       operationId: createComplaint
-      summary: Complaint intake and match
-      description: Returns a matched case or creates a new customer-reported case.
-      x-status: planned
-      x-phase: B4
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      summary: Record a customer complaint (customer-reported path, CUS001)
+      description: |
+        An agent or operator enters what the customer reports. It is matched to a
+        transaction by `instruction_ref`. If the detector already opened a case for
+        that transaction the complaint joins it (200). Otherwise a CUS001 case is
+        opened on the same queue (201), unmatched when no transaction is found. A
+        complaint alone never triggers money movement.
+      x-status: implemented
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PlannedBody' }
+            schema:
+              type: object
+              required: [text]
+              properties:
+                instruction_ref: { type: string }
+                text: { type: string, minLength: 5, maxLength: 2000 }
+                contact_ref: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
-        '201': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: Joined an existing case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComplaintResult' }
+        '201':
+          description: New customer-reported case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComplaintResult' }
+        '400': { description: Malformed body. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
@@ -1065,6 +1172,122 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    Case:
+      type: object
+      required: [id, case_ref, classification, status, priority, source, queue, opened_at, version, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        case_ref: { type: string, example: CASE-2026-000012 }
+        classification: { type: string, example: FAIL001 }
+        status: { type: string }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        risk_grade: { type: string }
+        source: { type: string, enum: [bot, customer, manual] }
+        txn_id: { type: string, format: uuid }
+        exposure_minor: { type: string }
+        currency: { type: string }
+        root_cause: { type: string }
+        owner_id: { type: string, format: uuid }
+        queue: { type: string }
+        rule_id: { type: string }
+        rule_version: { type: string }
+        regulatory_clock: { type: string }
+        opened_at: { type: string, format: date-time }
+        sla_due_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        closed_reason: { type: string }
+        version: { type: integer }
+        simulated: { type: boolean }
+    CaseEvidence:
+      type: object
+      required: [id, kind, ref, fetched_at, is_fact]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, example: transaction_event }
+        ref: { type: string }
+        source_system: { type: string }
+        fetched_at: { type: string, format: date-time }
+        hash: { type: string }
+        is_fact: { type: boolean }
+        detail: { type: object, additionalProperties: true }
+    CaseEvent:
+      type: object
+      required: [seq, at, actor_type, kind]
+      properties:
+        seq: { type: integer }
+        at: { type: string, format: date-time }
+        actor_type: { type: string }
+        actor_id: { type: string }
+        kind: { type: string }
+        from_status: { type: string }
+        to_status: { type: string }
+        reason_code: { type: string }
+        detail: { type: object, additionalProperties: true }
+    Notification:
+      type: object
+      required: [id, audience, stage, template_id, body, status, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        audience: { type: string, enum: [customer, operations] }
+        stage: { type: string, enum: [detected, verified, alert] }
+        template_id: { type: string }
+        body: { type: string }
+        status: { type: string }
+        simulated: { type: boolean }
+        created_at: { type: string }
+    ReversalSummary:
+      type: object
+      properties:
+        id: { type: string }
+        accepted_status: { type: string }
+        processing_status: { type: string }
+        financial_status: { type: string }
+    CaseDetail:
+      type: object
+      required: [case, evidence, history, notifications, reversals]
+      properties:
+        case: { $ref: '#/components/schemas/Case' }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/CaseEvidence' }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/CaseEvent' }
+        transaction: { $ref: '#/components/schemas/Transaction' }
+        notifications:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        reversals:
+          type: array
+          items: { $ref: '#/components/schemas/ReversalSummary' }
+    CustomerStatus:
+      type: object
+      required: [case_ref, stage, headline, outcome_verified, timeline, messages, simulated]
+      properties:
+        case_ref: { type: string }
+        stage: { type: string, enum: [investigating, reversal_in_progress, resolved, closed] }
+        headline: { type: string }
+        outcome_verified: { type: boolean }
+        regulatory_deadline: { type: string, format: date-time }
+        timeline:
+          type: array
+          items:
+            type: object
+            required: [at, label]
+            properties:
+              at: { type: string, format: date-time }
+              label: { type: string }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        simulated: { type: boolean }
+    ComplaintResult:
+      type: object
+      required: [case, matched_existing_case, linked_to_transaction]
+      properties:
+        case: { $ref: '#/components/schemas/Case' }
+        matched_existing_case: { type: boolean }
+        linked_to_transaction: { type: boolean }
     Transaction:
       type: object
       required: [id, instruction_ref, channel, rail, amount_minor, currency, debit_account_token, lifecycle_state, debit_status, credit_status, settlement_status, reversal_status, first_event_at, last_event_at, event_count, simulated]
