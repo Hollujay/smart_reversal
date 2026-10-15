@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
 )
@@ -20,6 +21,16 @@ type Options struct {
 	Service string
 	// Checkers are run by GET /v1/ready.
 	Checkers []Checker
+	// Verifier checks operator tokens. Nil means every protected route returns
+	// 401, which is the safe default when identity is not configured.
+	Verifier *identity.Verifier
+	// Auth handles POST /v1/auth/login. Nil leaves the route out entirely.
+	Auth *identity.Authenticator
+}
+
+type authRoutes struct {
+	auth   *identity.Authenticator
+	logger *slog.Logger
 }
 
 // NewRouter returns the API router. Routes live under /v1.
@@ -40,6 +51,18 @@ func NewRouter(o Options) http.Handler {
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health", h.live)
 		v1.Get("/ready", h.ready)
+
+		if o.Auth != nil {
+			ar := &authRoutes{auth: o.Auth, logger: o.Logger}
+			v1.Post("/auth/login", ar.login)
+		}
+
+		// Everything below needs a valid operator token. Routes are added only
+		// inside this group, so a new route cannot be public by accident.
+		v1.Group(func(pr chi.Router) {
+			pr.Use(requireAuth(o.Verifier, identity.AudienceOps))
+			pr.Get("/me", me)
+		})
 	})
 	return r
 }

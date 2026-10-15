@@ -67,6 +67,49 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Ready' }
 
+  /v1/auth/login:
+    post:
+      tags: [Platform]
+      operationId: login
+      summary: Exchange operator credentials for a token
+      description: |
+        Every failure returns the same 401, whether the institution, the user or
+        the password is wrong, or the account is disabled or locked. Five failed
+        attempts lock an account for fifteen minutes. The token carries
+        `mfa=false` because this endpoint does not run an MFA challenge.
+      x-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { description: Body is not a single JSON object with known fields. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/me:
+    get:
+      tags: [Platform]
+      operationId: getMe
+      summary: The caller's own identity
+      x-status: implemented
+      responses:
+        '200':
+          description: Identity taken from the verified token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /v1/events:
     post:
       tags: [Ingestion]
@@ -352,8 +395,10 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Operator and customer tokens. The tenant is read from the verified
-        token, never from the request. Issued from phase B1.
+        Ed25519-signed JWT. Operator tokens have audience `smartreversal-ops`.
+        Customer tokens (B10) have a different audience and are refused on
+        operator routes. The tenant is read from the verified token, never from
+        the request. Tokens live 15 minutes by default.
 
   parameters:
     IdempotencyKey:
@@ -491,6 +536,35 @@ components:
           additionalProperties:
             type: string
             enum: [ok, failed]
+    LoginRequest:
+      type: object
+      required: [institution, email, password]
+      properties:
+        institution: { type: string, example: DEMO-BANK }
+        email: { type: string }
+        password: { type: string, format: password }
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_at, user_id, roles]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_at: { type: string, format: date-time }
+        user_id: { type: string, format: uuid }
+        roles:
+          type: array
+          items: { type: string }
+    Me:
+      type: object
+      required: [user_id, tenant_id, roles, mfa, expires_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        roles:
+          type: array
+          items: { type: string }
+        mfa: { type: boolean }
+        expires_at: { type: string, format: date-time }
     PlannedBody:
       type: object
       description: Placeholder. The schema is defined when the owning phase starts.

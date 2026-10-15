@@ -9,13 +9,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 )
 
 // routerOperations lists "METHOD /path" for every route the real router serves.
 func routerOperations(t *testing.T) map[string]bool {
 	t.Helper()
-	h := server.NewRouter(server.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	h := server.NewRouter(server.Options{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		// A non-nil authenticator mounts the login route.
+		Auth: &identity.Authenticator{},
+	})
 	routes, ok := h.(chi.Routes)
 	if !ok {
 		t.Fatal("router does not expose its routes")
@@ -82,7 +87,7 @@ func TestNoPlannedOperationIsAlreadyServed(t *testing.T) {
 // Guards against the comparisons above passing because both sides are empty.
 func TestRouteDiscoveryFindsKnownRoutes(t *testing.T) {
 	served := routerOperations(t)
-	for _, want := range []string{"GET /v1/health", "GET /v1/ready"} {
+	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me"} {
 		if !served[want] {
 			t.Errorf("route discovery did not find %s; found %v", want, served)
 		}
