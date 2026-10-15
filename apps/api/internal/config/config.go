@@ -46,6 +46,9 @@ type Config struct {
 	DBName     string
 	DBSSLMode  string
 
+	DBMaxConns        int
+	DBConnMaxLifetime time.Duration
+
 	RedisHost     string
 	RedisPort     int
 	RedisPassword string
@@ -70,25 +73,27 @@ func LoadFrom(lookup func(string) (string, bool)) (*Config, error) {
 	l := &loader{lookup: lookup}
 
 	c := &Config{
-		Environment:     strings.ToLower(l.str("ENVIRONMENT", EnvDevelopment)),
-		LogLevel:        strings.ToLower(l.str("LOG_LEVEL", "info")),
-		APIPort:         l.port("API_PORT", 8080),
-		ReadTimeout:     l.duration("API_READ_TIMEOUT", 15*time.Second),
-		WriteTimeout:    l.duration("API_WRITE_TIMEOUT", 15*time.Second),
-		IdleTimeout:     l.duration("API_IDLE_TIMEOUT", 60*time.Second),
-		ShutdownTimeout: l.duration("API_SHUTDOWN_TIMEOUT", 20*time.Second),
-		DBHost:          l.str("DB_HOST", "localhost"),
-		DBPort:          l.port("DB_PORT", 5432),
-		DBUser:          l.required("DB_USER"),
-		DBPassword:      l.required("DB_PASSWORD"),
-		DBName:          l.required("DB_NAME"),
-		DBSSLMode:       l.str("DB_SSLMODE", "disable"),
-		RedisHost:       l.str("REDIS_HOST", "localhost"),
-		RedisPort:       l.port("REDIS_PORT", 6379),
-		RedisPassword:   l.str("REDIS_PASSWORD", ""),
-		RedisDB:         l.nonNegInt("REDIS_DB", 0),
-		JWTSecret:       l.required("JWT_SECRET"),
-		AIServiceURL:    l.str("AI_SERVICE_URL", "http://localhost:8000"),
+		Environment:       strings.ToLower(l.str("ENVIRONMENT", EnvDevelopment)),
+		LogLevel:          strings.ToLower(l.str("LOG_LEVEL", "info")),
+		APIPort:           l.port("API_PORT", 8080),
+		ReadTimeout:       l.duration("API_READ_TIMEOUT", 15*time.Second),
+		WriteTimeout:      l.duration("API_WRITE_TIMEOUT", 15*time.Second),
+		IdleTimeout:       l.duration("API_IDLE_TIMEOUT", 60*time.Second),
+		ShutdownTimeout:   l.duration("API_SHUTDOWN_TIMEOUT", 20*time.Second),
+		DBHost:            l.str("DB_HOST", "localhost"),
+		DBPort:            l.port("DB_PORT", 5432),
+		DBUser:            l.required("DB_USER"),
+		DBPassword:        l.required("DB_PASSWORD"),
+		DBName:            l.required("DB_NAME"),
+		DBSSLMode:         l.str("DB_SSLMODE", "disable"),
+		DBMaxConns:        l.positiveInt("DB_MAX_OPEN_CONNS", 25),
+		DBConnMaxLifetime: l.duration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
+		RedisHost:         l.str("REDIS_HOST", "localhost"),
+		RedisPort:         l.port("REDIS_PORT", 6379),
+		RedisPassword:     l.str("REDIS_PASSWORD", ""),
+		RedisDB:           l.nonNegInt("REDIS_DB", 0),
+		JWTSecret:         l.required("JWT_SECRET"),
+		AIServiceURL:      l.str("AI_SERVICE_URL", "http://localhost:8000"),
 
 		FinancialExecutionEnabled: l.boolean("FINANCIAL_EXECUTION_ENABLED", false),
 	}
@@ -213,6 +218,19 @@ func (l *loader) nonNegInt(key string, def int) int {
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 0 {
 		l.errs = append(l.errs, fmt.Errorf("%s must be a non-negative integer", key))
+		return def
+	}
+	return n
+}
+
+func (l *loader) positiveInt(key string, def int) int {
+	v, ok := l.raw(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		l.errs = append(l.errs, fmt.Errorf("%s must be a positive integer", key))
 		return def
 	}
 	return n

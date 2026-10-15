@@ -44,6 +44,9 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ReadTimeout != 15*time.Second || c.ShutdownTimeout != 20*time.Second {
 		t.Fatalf("unexpected timeouts: %+v", c)
 	}
+	if c.DBMaxConns != 25 || c.DBConnMaxLifetime != 5*time.Minute {
+		t.Fatalf("unexpected pool defaults: %d %s", c.DBMaxConns, c.DBConnMaxLifetime)
+	}
 	if c.FinancialExecutionEnabled {
 		t.Fatal("financial execution must default to false")
 	}
