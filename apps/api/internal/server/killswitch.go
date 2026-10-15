@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/automation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
@@ -34,10 +35,16 @@ type pendingJSON struct {
 type killswitchState struct {
 	Frozen  []frozenJSON  `json:"frozen"`
 	Pending []pendingJSON `json:"pending_unfreeze"`
+	// What the freeze is holding back, so screens can say so. Deferred work is
+	// detection waiting for an unfreeze; parked reversals are approved but not yet
+	// submitted; jobs show whether each scheduled job is running or paused.
+	DeferredWork    map[string]int   `json:"deferred_work"`
+	ParkedReversals int              `json:"parked_reversals"`
+	Jobs            []automation.Job `json:"jobs"`
 }
 
 func stateJSON(st killswitch.State) killswitchState {
-	out := killswitchState{Frozen: []frozenJSON{}, Pending: []pendingJSON{}}
+	out := killswitchState{Frozen: []frozenJSON{}, Pending: []pendingJSON{}, DeferredWork: map[string]int{}, Jobs: []automation.Job{}}
 	for _, f := range st.Frozen {
 		out.Frozen = append(out.Frozen, frozenJSON{string(f.Target.Scope), f.Target.Value, f.By, f.Reason, f.At})
 	}
@@ -56,16 +63,30 @@ func (s *Services) getKillSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var st killswitch.State
+	var deferred map[string]int
+	var parked int
+	var jobs []automation.Job
 	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
 		var err error
-		st, err = s.KillSwitch.State(r.Context(), tx, p.TenantID)
+		if st, err = s.KillSwitch.State(r.Context(), tx, p.TenantID); err != nil {
+			return err
+		}
+		if deferred, err = automation.Counts(r.Context(), tx, p.TenantID); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(r.Context(), `SELECT count(*)::int FROM reversals WHERE tenant_id = $1 AND parked_at IS NOT NULL`, p.TenantID).Scan(&parked); err != nil {
+			return err
+		}
+		jobs, err = automation.Jobs(r.Context(), tx, p.TenantID)
 		return err
 	})
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, stateJSON(st))
+	out := stateJSON(st)
+	out.DeferredWork, out.ParkedReversals, out.Jobs = deferred, parked, jobs
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type killswitchRequest struct {

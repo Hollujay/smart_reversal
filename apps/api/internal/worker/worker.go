@@ -110,6 +110,12 @@ func sweepLoop(ctx context.Context, d Deps) error {
 			} else if n > 0 {
 				d.Logger.Info("sweep_opened_cases", "count", n)
 			}
+			// Detection a freeze held back is picked up again as soon as it is allowed.
+			if n, err := d.Detector.ResumeAll(ctx, d.Pool); err != nil && ctx.Err() == nil {
+				d.Logger.Error("resume_held_failed", "error", err)
+			} else if n > 0 {
+				d.Logger.Info("resumed_held_detection", "count", n)
+			}
 			if d.Reversal != nil {
 				reverseAll(ctx, d)
 			}

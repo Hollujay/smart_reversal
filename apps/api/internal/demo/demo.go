@@ -74,10 +74,11 @@ func NewEnv(ctx context.Context, pool *db.Pool) (*Env, error) {
 	cfg := &configsvc.Service{Audit: app}
 	cs := &cases.Service{Audit: app, Config: cfg}
 	ing := &txn.Service{}
+	kill := &killswitch.Service{Audit: app}
 	store := &identity.PGUserStore{Pool: pool}
 	return &Env{Pool: pool, Config: cfg, Cases: cs, Ingest: ing, Store: store,
-		Detector: &detect.Detector{Cases: cs, Config: cfg},
-		Reversal: &reversal.Service{Pool: pool, Config: cfg, Kill: &killswitch.Service{Audit: app}, Cases: cs, Audit: app, Txn: ing, Policy: policy,
+		Detector: &detect.Detector{Cases: cs, Config: cfg, Kill: kill},
+		Reversal: &reversal.Service{Pool: pool, Config: cfg, Kill: kill, Cases: cs, Audit: app, Txn: ing, Policy: policy,
 			SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}}, Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}},
 		Auth: &identity.Authenticator{Store: store},
 	}, nil

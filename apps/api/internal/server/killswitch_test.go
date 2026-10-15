@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/automation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
@@ -182,5 +184,36 @@ func TestKillSwitchRoutesAreAbsentWithoutTheService(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/killswitch", nil))
 	if rec.Code == http.StatusOK {
 		t.Fatal("route answered")
+	}
+}
+
+func TestTheStateShowsWhatAFreezeIsHoldingBackAndTheJobs(t *testing.T) {
+	r := newKSRig(t)
+	ctx := context.Background()
+	officer := r.tok(t, uuid.New(), false, "REVERSAL_OFFICER")
+	// Nothing held yet: the fields are present and empty.
+	code, st, body := r.call(http.MethodGet, officer, "")
+	if code != http.StatusOK || st.DeferredWork == nil || st.Jobs == nil || st.ParkedReversals != 0 || len(st.DeferredWork) != 0 || len(st.Jobs) != 0 {
+		t.Fatalf("%d %s", code, body)
+	}
+	if err := r.pool.WithTenant(ctx, r.tenant, func(tx pgx.Tx) error {
+		for i := 0; i < 2; i++ {
+			if err := automation.Defer(ctx, tx, r.tenant, automation.KindDetect, uuid.New(), &killswitch.FrozenError{Scope: killswitch.ScopeGlobal}); err != nil {
+				return err
+			}
+		}
+		return automation.RecordJob(ctx, tx, r.tenant, automation.JobReversalSweep, true, "global", map[string]any{"held_new_requests": 2})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, st, body = r.call(http.MethodGet, officer, "")
+	if code != http.StatusOK || st.DeferredWork["detect"] != 2 || len(st.Jobs) != 1 || st.Jobs[0].Job != "reversal_sweep" || st.Jobs[0].State != "paused" || st.Jobs[0].Frozen != "global" {
+		t.Fatalf("%d %s", code, body)
+	}
+	// Another institution sees none of it.
+	other := dbtest.Tenant(t, r.pool)
+	tok, _, _ := r.signer.Issue(identity.Principal{UserID: uuid.New(), TenantID: other, Roles: []string{"REVERSAL_OFFICER"}}, identity.AudienceOps, time.Now())
+	if _, st2, _ := r.call(http.MethodGet, tok, ""); len(st2.DeferredWork) != 0 || len(st2.Jobs) != 0 {
+		t.Fatalf("another institution sees %+v", st2)
 	}
 }

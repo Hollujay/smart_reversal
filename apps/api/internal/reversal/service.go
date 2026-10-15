@@ -82,18 +82,20 @@ type Reversal struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	ApprovalID       uuid.UUID  `json:"approval_id,omitempty"`
 	Version          int        `json:"version"`
+	// ParkedAt is set while a freeze holds back submission of an approved reversal.
+	ParkedAt *time.Time `json:"parked_at,omitempty"`
 }
 
 const reversalColumns = `r.id, r.reversal_ref, r.case_id, r.txn_id, r.idempotency_key, coalesce(r.requested_by::text, ''), r.requested_by_type,
 	r.amount_minor, r.currency, r.reason_code, r.approval_status, r.accepted_status, r.processing_status, r.financial_status, r.gate_result,
-	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version`
+	r.provider_ref, r.failure_reason, r.submitted_at, r.posted_at, r.verified_at, r.created_at, coalesce(a.id, '00000000-0000-0000-0000-000000000000'), r.version, r.parked_at`
 
 func scanReversal(row pgx.Row) (Reversal, error) {
 	var r Reversal
 	var gate []byte
 	if err := row.Scan(&r.ID, &r.Ref, &r.CaseID, &r.TxnID, &r.IdempotencyKey, &r.RequestedBy, &r.RequestedByType, &r.AmountMinor, &r.Currency,
 		&r.ReasonCode, &r.ApprovalStatus, &r.AcceptedStatus, &r.ProcessingStatus, &r.FinancialStatus, &gate, &r.ProviderRef, &r.FailureReason,
-		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version); err != nil {
+		&r.SubmittedAt, &r.PostedAt, &r.VerifiedAt, &r.CreatedAt, &r.ApprovalID, &r.Version, &r.ParkedAt); err != nil {
 		return r, err
 	}
 	_ = json.Unmarshal(gate, &r.Gate)

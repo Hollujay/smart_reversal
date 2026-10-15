@@ -69,7 +69,8 @@ func run() error {
 
 	app := &audit.Appender{}
 	cfgSvc := &configsvc.Service{Audit: app}
-	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc}
+	killSvc := &killswitch.Service{Audit: app}
+	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc, Kill: killSvc}
 
 	caseSvc := &cases.Service{Audit: app, Config: cfgSvc}
 	policy, err := authz.Load(ctx, pool)
@@ -78,7 +79,7 @@ func run() error {
 	}
 	// Execution is simulated: the sources below are the synthetic ones.
 	txnSvc := &txn.Service{}
-	revSvc := &reversal.Service{Pool: pool, Config: cfgSvc, Kill: &killswitch.Service{Audit: app}, Cases: caseSvc, Audit: app, Txn: txnSvc,
+	revSvc := &reversal.Service{Pool: pool, Config: cfgSvc, Kill: killSvc, Cases: caseSvc, Audit: app, Txn: txnSvc,
 		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
 		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}
 

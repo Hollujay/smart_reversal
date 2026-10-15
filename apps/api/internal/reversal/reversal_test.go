@@ -40,6 +40,8 @@ type rig struct {
 	kill   *killswitch.Service
 	tenant uuid.UUID
 	n      int
+	// freezeAfterSetup, when set, is applied by approvedUnderFreeze (freeze tests).
+	freezeAfterSetup func()
 }
 
 func newRig(t *testing.T) *rig {
@@ -462,36 +464,6 @@ func TestTheKillSwitchStopsAutomationAtEveryScope(t *testing.T) {
 				t.Fatal("the provider was called while frozen")
 			}
 		})
-	}
-}
-
-func TestAFreezeAfterApprovalStopsTheReversalBeforeItReachesTheProvider(t *testing.T) {
-	r := newRig(t)
-	r.policy(t)
-	r.set(t, "reversal.auto_eligible.FAIL001", 0) // needs a person
-	s := r.failed(t, "INS-FZ", 10)
-	res := r.auto(t, s.caseID)
-	if res.Outcome != "awaiting_approval" {
-		t.Fatalf("%+v", res)
-	}
-	sup := r.user("SUPERVISOR")
-	rev, err := r.svc.Decide(context.Background(), r.tenant, sup, res.Reversal.ApprovalID, true, "looks right")
-	if err != nil || rev.ApprovalStatus != "APPROVED" {
-		t.Fatalf("%+v %v", rev, err)
-	}
-	r.tx(t, func(tx pgx.Tx) error {
-		_, err := r.kill.Freeze(context.Background(), tx, r.tenant, uuid.New(), killswitch.Target{Scope: killswitch.ScopeGlobal}, "stop everything now")
-		return err
-	})
-	out, err := r.svc.Execute(context.Background(), r.tenant, rev.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.AcceptedStatus != "REJECTED" || !strings.Contains(out.FailureReason, "frozen") || r.providerRequests(t, s.ref) != 0 || r.ledgerCount(t, s.ref) != 0 {
-		t.Fatalf("the freeze did not stop it: %+v", out)
-	}
-	if got := r.kase(t, s.caseID); got.Status != cases.StUnderInvestigation {
-		t.Fatalf("case is %s", got.Status)
 	}
 }
 
