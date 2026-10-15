@@ -15,8 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/automation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/stream"
@@ -42,7 +44,51 @@ type Finding struct {
 type Detector struct {
 	Cases  *cases.Service
 	Config *configsvc.Service
-	Now    func() time.Time
+	// Kill, when set, is consulted immediately before the detector opens a case
+	// or closes one automatically. A covering freeze defers that work: it is
+	// recorded in deferred_work and carried out after an authorised unfreeze.
+	// Reading and storing evidence is never held back. Leaving Kill nil turns
+	// enforcement off, which only tests should do.
+	Kill *killswitch.Service
+	Now  func() time.Time
+
+	// beforeAction lets a test change the world between "decide to act" and "act".
+	beforeAction func()
+}
+
+// run carries what one evaluation learns. held is set when a freeze stopped any
+// action, so the caller can record the deferral. at is the time a case counts as
+// detected: normally now, but the original time when held work is resumed.
+type run struct {
+	at      time.Time
+	held    *killswitch.FrozenError
+	resumed bool
+}
+
+// allowed reports whether an action may proceed. It checks the kill switch at the
+// moment of action. A freeze is not an error: the work is noted as held. A switch
+// that cannot be read stops the action and fails the evaluation, which the
+// consumer retries.
+func (d *Detector) allowed(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, rail, code, rule string) (bool, error) {
+	if d.Kill == nil {
+		return true, nil
+	}
+	if d.beforeAction != nil {
+		d.beforeAction()
+	}
+	err := d.Kill.Check(ctx, tx, tenant, killswitch.Action{Rail: rail, ExceptionType: code, PolicyID: rule})
+	var fe *killswitch.FrozenError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &fe):
+		if ec.held == nil {
+			ec.held = fe
+		}
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func (d *Detector) now() time.Time {
@@ -102,6 +148,15 @@ func (d *Detector) evidence(ctx context.Context, tx pgx.Tx, tenant, id uuid.UUID
 // Evaluate runs every detector against one transaction and returns what it found.
 // It is idempotent: a transaction seen again yields the same cases.
 func (d *Detector) Evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.UUID) ([]Finding, error) {
+	ec := &run{at: d.now()}
+	out, err := d.evaluate(ctx, tx, tenant, txnID, ec)
+	if err == nil && ec.held != nil {
+		err = automation.Defer(ctx, tx, tenant, automation.KindDetect, txnID, ec.held)
+	}
+	return out, err
+}
+
+func (d *Detector) evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.UUID, ec *run) ([]Finding, error) {
 	t, err := scanTxn(tx.QueryRow(ctx, txnSelect+` WHERE tenant_id = $1 AND id = $2`, tenant, txnID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // the transaction is gone or not ours: nothing to do
@@ -127,41 +182,47 @@ func (d *Detector) Evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.U
 
 	switch t.Lifecycle {
 	case txn.StateConfirmedFailure:
-		if err := add(d.open(ctx, tx, tenant, t, cases.CodeNoCredit, RuleFailure, "", "beneficiary_side_failure",
+		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeNoCredit, RuleFailure, "", "beneficiary_side_failure",
 			"The debit was posted and the beneficiary credit was reported as failed by the source.", ev)); err != nil {
 			return nil, err
 		}
 	case txn.StateUnknown:
-		if err := add(d.open(ctx, tx, tenant, t, cases.CodeUnknown, RuleUnknown, "", "switch_response_failure",
+		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleUnknown, "", "switch_response_failure",
 			"The debit was posted and the switch did not answer. The outcome is unknown, which is not the same as failed.", ev)); err != nil {
 			return nil, err
 		}
 	case txn.StateConflicting:
-		if err := add(d.open(ctx, tx, tenant, t, cases.CodeUnknown, RuleUnknown, "", "conflicting_evidence",
+		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleUnknown, "", "conflicting_evidence",
 			"Sources disagree: one reports the credit confirmed and another reports it failed.", ev)); err != nil {
 			return nil, err
 		}
 	case txn.StateConfirmedSuccess:
-		if err := d.closeLateSuccess(ctx, tx, tenant, t); err != nil {
+		if err := d.closeLateSuccess(ctx, tx, tenant, ec, t); err != nil {
 			return nil, err
 		}
 	}
 
 	if t.DebitStatus == txn.DebitPosted && t.FirstDebitAt != nil {
-		if err := add(d.duplicate(ctx, tx, tenant, t, ev)); err != nil {
+		if err := add(d.duplicate(ctx, tx, tenant, ec, t, ev)); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
-func (d *Detector) open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t txnRow, code, rule, risk, root, why string, ev []cases.Evidence) (Finding, error) {
+func (d *Detector) open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow, code, rule, risk, root, why string, ev []cases.Evidence) (Finding, error) {
+	if ok, err := d.allowed(ctx, tx, tenant, ec, t.Rail, code, rule); err != nil || !ok {
+		return Finding{}, err
+	}
+	if ec.resumed {
+		why += " Opened late: detection was held by a kill switch freeze and resumed after it was lifted."
+	}
 	amount := t.Amount
 	id := t.ID
 	c, created, err := d.Cases.Open(ctx, tx, tenant, cases.OpenInput{
 		Classification: code, Source: cases.SourceBot, RiskGrade: risk, TxnID: &id, ExposureMinor: &amount, Currency: t.Currency,
 		Rail: t.Rail, RootCause: root, RuleID: rule, RuleVersion: RuleVersion, Explanation: why, Evidence: ev, Actor: cases.System,
-		At: d.now(),
+		At: ec.at,
 	})
 	if err != nil {
 		return Finding{}, err
@@ -181,7 +242,7 @@ func (d *Detector) open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t txnR
 // beneficiary inside the configured window. It never matches on account, amount
 // and time alone when the earlier transfer failed: a customer who retries after a
 // confirmed failure is not a duplicate.
-func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t txnRow, ev []cases.Evidence) (Finding, error) {
+func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow, ev []cases.Evidence) (Finding, error) {
 	window, err := d.Config.Effective(ctx, tx, tenant, "duplicate.window_seconds", d.now())
 	if errors.Is(err, configsvc.ErrNotConfigured) {
 		return Finding{}, nil // no approved window, so no duplicate rule runs
@@ -239,7 +300,7 @@ func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t
 		laterEv = append(laterEv, cases.Evidence{Kind: "related_transaction", Ref: earlier.Ref, IsFact: true,
 			Detail: map[string]any{"role": "earlier_debit", "instruction_ref": earlier.Ref, "first_debit_at": earlier.FirstDebitAt.UTC().Format(time.RFC3339),
 				"credit_status": earlier.CreditStatus, "window_seconds": window.Value}})
-		f, err := d.open(ctx, tx, tenant, later, cases.CodeDuplicate, RuleDuplicate, risk, "duplicate_retry",
+		f, err := d.open(ctx, tx, tenant, ec, later, cases.CodeDuplicate, RuleDuplicate, risk, "duplicate_retry",
 			fmt.Sprintf("Another debit with the same account, amount, currency and beneficiary (%s) was posted within %d seconds. Risk %s.", earlier.Ref, window.Value, risk), laterEv)
 		if err != nil {
 			return Finding{}, err
@@ -253,7 +314,7 @@ func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t
 
 // closeLateSuccess closes an open "unknown" case once the transaction is later
 // confirmed successful, so nobody reverses a transaction that actually succeeded.
-func (d *Detector) closeLateSuccess(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, t txnRow) error {
+func (d *Detector) closeLateSuccess(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow) error {
 	id := t.ID
 	list, err := d.Cases.List(ctx, tx, tenant, cases.Filter{Classification: cases.CodeUnknown, TxnID: &id}, nil, 50)
 	if err != nil {
@@ -262,6 +323,9 @@ func (d *Detector) closeLateSuccess(ctx context.Context, tx pgx.Tx, tenant uuid.
 	for _, c := range list {
 		if cases.IsTerminal(c.Status) || !cases.CanTransition(c.Status, cases.StClosedNoException) {
 			continue
+		}
+		if ok, err := d.allowed(ctx, tx, tenant, ec, t.Rail, cases.CodeUnknown, RuleUnknown); err != nil || !ok {
+			return err
 		}
 		if _, err := d.Cases.Transition(ctx, tx, tenant, c.ID, cases.System, cases.StClosedNoException, 0, "LATE_SUCCESS_CONFIRMED"); err != nil {
 			return err
@@ -320,10 +384,17 @@ func (d *Detector) SweepStuck(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) 
 		if err != nil {
 			return nil, err
 		}
-		f, err := d.open(ctx, tx, tenant, t, cases.CodeUnknown, RuleStuck, "", "switch_response_failure",
+		ec := &run{at: d.now()}
+		f, err := d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleStuck, "", "switch_response_failure",
 			fmt.Sprintf("No final answer %d seconds after the last event, past the rail's waiting threshold of %d seconds.", int(d.now().Sub(t.LastEventAt).Seconds()), v.Value), ev)
 		if err != nil {
 			return nil, err
+		}
+		if ec.held != nil {
+			if err := automation.Defer(ctx, tx, tenant, automation.KindDetect, t.ID, ec.held); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		out = append(out, f)
 	}
@@ -353,17 +424,122 @@ func (d *Detector) SweepAll(ctx context.Context, pool *db.Pool) (int, error) {
 	opened := 0
 	for _, t := range tenants {
 		err := pool.WithTenant(ctx, t, func(tx pgx.Tx) error {
+			paused, frozen, err := d.pauseState(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			if paused {
+				// A global freeze covers everything the sweep could do. It is recorded, not run.
+				return automation.RecordJob(ctx, tx, t, automation.JobDetectorSweep, true, frozen, map[string]any{"opened": 0})
+			}
 			fs, err := d.SweepStuck(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			n := 0
 			for _, f := range fs {
 				if f.Created {
 					opened++
+					n++
 				}
 			}
-			return err
+			return automation.RecordJob(ctx, tx, t, automation.JobDetectorSweep, false, frozen, map[string]any{"opened": n})
 		})
 		if err != nil {
 			return opened, fmt.Errorf("detect: sweep tenant %s: %w", t, err)
 		}
 	}
 	return opened, nil
+}
+
+// pauseState reports whether a global freeze pauses a job, and a summary of every
+// frozen scope for display. With no Kill service nothing is paused.
+func (d *Detector) pauseState(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) (paused bool, frozen string, err error) {
+	if d.Kill == nil {
+		return false, "", nil
+	}
+	st, err := d.Kill.State(ctx, tx, tenant)
+	if err != nil {
+		return false, "", fmt.Errorf("detect: cannot read the kill switch: %w", err)
+	}
+	for _, f := range st.Frozen {
+		if f.Target.Scope == killswitch.ScopeGlobal {
+			paused = true
+		}
+	}
+	return paused, automation.FrozenSummary(st), nil
+}
+
+// ResumeDeferred re-evaluates transactions whose detection was held by a freeze.
+// Each is checked against the switch again as it is processed, so an item stays
+// held while a covering freeze remains and is done exactly once after it lifts.
+// Cases opened this way are dated from the original detection, so the SLA clock
+// does not start late because of the freeze, and say so in their explanation.
+func (d *Detector) ResumeDeferred(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, limit int) (resumed, stillHeld int, err error) {
+	items, err := automation.Claim(ctx, tx, tenant, automation.KindDetect, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, it := range items {
+		ec := &run{at: it.CreatedAt, resumed: true}
+		if _, err := d.evaluate(ctx, tx, tenant, it.SubjectID, ec); err != nil {
+			return resumed, stillHeld, err
+		}
+		if ec.held != nil {
+			if err := automation.StillHeld(ctx, tx, tenant, it.ID); err != nil {
+				return resumed, stillHeld, err
+			}
+			stillHeld++
+			continue
+		}
+		if err := automation.Resumed(ctx, tx, tenant, it.ID); err != nil {
+			return resumed, stillHeld, err
+		}
+		resumed++
+	}
+	return resumed, stillHeld, nil
+}
+
+// ResumeAll runs ResumeDeferred for every institution and records the job state.
+func (d *Detector) ResumeAll(ctx context.Context, pool *db.Pool) (resumed int, err error) {
+	rows, err := pool.Query(ctx, `SELECT id FROM institutions ORDER BY code`)
+	if err != nil {
+		return 0, err
+	}
+	var tenants []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		tenants = append(tenants, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, t := range tenants {
+		err := pool.WithTenant(ctx, t, func(tx pgx.Tx) error {
+			_, frozen, err := d.pauseState(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			r, held, err := d.ResumeDeferred(ctx, tx, t, 100)
+			if err != nil {
+				return err
+			}
+			resumed += r
+			open, err := automation.Counts(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			return automation.RecordJob(ctx, tx, t, automation.JobResumeHeld, false, frozen,
+				map[string]any{"resumed": r, "still_held": held, "open": open[automation.KindDetect]})
+		})
+		if err != nil {
+			return resumed, fmt.Errorf("detect: resume tenant %s: %w", t, err)
+		}
+	}
+	return resumed, nil
 }
