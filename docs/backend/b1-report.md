@@ -42,7 +42,9 @@ Linux, Go 1.27.2, PostgreSQL 16 and Redis 7 in containers.
 | `gitleaks` over 308 commits | no leaks |
 | End-to-end with the real binaries | migrate, bootstrap two operators, start the API, log in, `/v1/me`, freeze a rail, refused unfreeze without MFA, read audit with `verify=true` (chain verified over 10 records), supervisor refused the `team` audit scope |
 
-**Not run:** the GitHub Actions workflow on this branch (it runs on the pull request), `docker compose up` (plugin not installed), the web and AI jobs, load or chaos tests, and any SAST beyond `go vet` and `govulncheck`.
+**GitHub Actions** on PR #12: Go (with Postgres and Redis services, a skipped test fails the job, `govulncheck`), secret scan, AI and web jobs all pass.
+
+**Not run:** `docker compose up` (plugin not installed), the web and AI jobs, load or chaos tests, and any SAST beyond `go vet` and `govulncheck`.
 
 The end-to-end run found a real defect, fixed in `9e2c00e`: reading configuration needed the same MFA as approving it, so a risk officer without MFA could not read a clock. Reading and proposing no longer need MFA. Approving still does.
 
@@ -96,10 +98,10 @@ v2 B1 acceptance: *no endpoint is reachable without auth and authorisation tests
 | Unauthorised users cannot reach protected resources | Yes | Router-walk test, per-route role tests |
 | Cross-tenant access is demonstrably blocked | Yes | Isolation tests for every tenant table |
 | Audit tampering detected | Yes | Eleven kinds, each at the right record |
-| CI green | **Not shown** | Workflow has not run on this branch |
+| CI green | Yes | All four jobs pass on PR #12 |
 | MFA-gated actions usable | **No** | D20 |
 
-Assessment: the exit requirement is met for what can be exercised. I recommend not declaring B1 closed until the pull request's CI is green and D20 (MFA for Track H) is decided, because B5 approvals cannot be demonstrated without it.
+Assessment: the exit requirement is met for what can be exercised. I recommend not declaring B1 closed until D20 (MFA for Track H) is decided, because B5 approvals cannot be demonstrated without it.
 
 ## 8. Decisions needed
 
