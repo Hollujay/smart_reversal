@@ -265,3 +265,14 @@ func TestConcurrentRunnersApplyOnce(t *testing.T) {
 		t.Fatalf("migrations applied %d times in total, want 2", total)
 	}
 }
+
+func TestLoadFromRootDirectory(t *testing.T) {
+	fsys := fstest.MapFS{
+		"0001_a.up.sql":   &fstest.MapFile{Data: []byte("SELECT 1;")},
+		"0001_a.down.sql": &fstest.MapFile{Data: []byte("SELECT 2;")},
+	}
+	ms, err := Load(fsys, ".")
+	if err != nil || len(ms) != 1 || ms[0].Down != "SELECT 2;" {
+		t.Fatalf("ms=%+v err=%v", ms, err)
+	}
+}

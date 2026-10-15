@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -54,7 +55,7 @@ func Load(fsys fs.FS, dir string) ([]Migration, error) {
 			return nil, fmt.Errorf("migrate: unexpected file name %q", e.Name())
 		}
 		version, _ := strconv.Atoi(m[1])
-		body, err := fs.ReadFile(fsys, dir+"/"+e.Name())
+		body, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("migrate: read %s: %w", e.Name(), err)
 		}
