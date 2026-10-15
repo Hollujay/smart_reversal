@@ -28,6 +28,25 @@ import {
   RECONCILIATION_RUNS,
 } from './mockSimulatorData';
 
+import { aiClient } from './aiClient';
+
+export interface ServiceTierStatus {
+  backend: {
+    isLive: boolean;
+    status: 'connected' | 'offline';
+    service: string;
+    version?: string;
+    latencyMs?: number;
+  };
+  aiService: {
+    isLive: boolean;
+    status: 'connected' | 'offline';
+    service: string;
+    latencyMs?: number;
+  };
+  simulationFallbackActive: boolean;
+}
+
 // In-memory reactive state for simulator
 let transactions = [...INITIAL_TRANSACTIONS];
 let exceptions = [...INITIAL_EXCEPTIONS];
@@ -58,6 +77,51 @@ export interface AuthorizeReversalParams {
 }
 
 export const apiClient = {
+  // Check live status of all 3 architectural tiers
+  async getServiceStatuses(): Promise<ServiceTierStatus> {
+    let backendLive = false;
+    let backendService = 'api';
+    let backendVersion = '0.1.0';
+    let backendLatency = 0;
+
+    try {
+      const start = performance.now();
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 2000);
+      const origin = typeof window !== 'undefined' ? '' : 'http://localhost:5173';
+      const res = await fetch(`${origin}/v1/health`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (res.ok) {
+        const data = await res.json();
+        backendLive = true;
+        backendService = data.service || 'api';
+        backendVersion = data.version || '0.1.0';
+        backendLatency = Math.round(performance.now() - start);
+      }
+    } catch {
+      backendLive = false;
+    }
+
+    const aiHealth = await aiClient.getHealth();
+
+    return {
+      backend: {
+        isLive: backendLive,
+        status: backendLive ? 'connected' : 'offline',
+        service: backendService,
+        version: backendVersion,
+        latencyMs: backendLatency,
+      },
+      aiService: {
+        isLive: aiHealth.isLive,
+        status: aiHealth.isLive ? 'connected' : 'offline',
+        service: aiHealth.service,
+        latencyMs: aiHealth.latencyMs,
+      },
+      simulationFallbackActive: !backendLive || !aiHealth.isLive,
+    };
+  },
+
   // GET /health
   async getHealth() {
     return {

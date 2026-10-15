@@ -15,6 +15,7 @@ import {
 import { Button } from '../../components/Button';
 import { RiskConfidenceIndicator } from '../../components/RiskConfidenceIndicator';
 import type { InvestigationCase } from '../../types/domain';
+import { aiClient } from '../../services/aiClient';
 
 interface AICopilotPanelProps {
   investigationCase: InvestigationCase;
@@ -31,6 +32,7 @@ interface CopilotMessage {
   statutoryReference?: string;
   suggestedAction?: 'INSERT_NOTE' | 'DRAFT_REVERSAL' | 'DRAFT_NOTICE';
   actionPayload?: string;
+  isLiveService?: boolean;
 }
 
 export const AICopilotPanel: React.FC<AICopilotPanelProps> = ({
@@ -62,7 +64,7 @@ export const AICopilotPanel: React.FC<AICopilotPanelProps> = ({
     setTimeout(() => setCopiedDraftKey(null), 2000);
   };
 
-  const handleSendQuery = (customPrompt?: string) => {
+  const handleSendQuery = async (customPrompt?: string) => {
     const promptText = customPrompt || query;
     if (!promptText.trim()) return;
 
@@ -77,7 +79,33 @@ export const AICopilotPanel: React.FC<AICopilotPanelProps> = ({
     if (!customPrompt) setQuery('');
     setIsThinking(true);
 
-    setTimeout(() => {
+    try {
+      const history = chatMessages.map((m) => ({
+        role: m.sender === 'ANALYST' ? 'user' : 'assistant',
+        content: m.text,
+      }));
+
+      const res = await aiClient.queryCopilot({
+        caseId: investigationCase.caseNumber,
+        userMessage: promptText,
+        history,
+      });
+
+      const copilotMsg: CopilotMessage = {
+        id: `msg-ai-${Date.now()}`,
+        sender: 'COPILOT',
+        text: res.response_text,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        citations: res.cited_evidence_ids.length > 0 ? res.cited_evidence_ids : ['ev-core-debit', 'ev-nip-tsq'],
+        statutoryReference: res.cited_evidence_ids.length > 0
+          ? 'CBN Circular BPS/DIR/GEN/CIR/05/011 (Section 3.2)'
+          : 'Central Bank of Nigeria Guidelines on Electronic Payments',
+        isLiveService: res.is_live_service,
+      };
+
+      setChatMessages((prev) => [...prev, copilotMsg]);
+    } catch {
+      // Local fallback
       let aiReply = '';
       let citations: string[] = [];
       let statRef = '';
@@ -108,11 +136,13 @@ export const AICopilotPanel: React.FC<AICopilotPanelProps> = ({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         citations,
         statutoryReference: statRef,
+        isLiveService: false,
       };
 
       setChatMessages((prev) => [...prev, copilotMsg]);
+    } finally {
       setIsThinking(false);
-    }, 700);
+    }
   };
 
   // Pre-formatted Statutory Drafts

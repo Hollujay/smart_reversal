@@ -32,6 +32,7 @@ app.include_router(evaluation_router, prefix="/v1/ai")
 
 
 @app.get("/health")
+@app.get("/v1/ai/health")
 def health_check():
     return {"status": "operational", "service": "ai-service"}
 

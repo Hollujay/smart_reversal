@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Bell,
@@ -16,6 +16,7 @@ import { GlobalSearchModal } from './GlobalSearchModal';
 import { SessionTimeoutModal } from './SessionTimeoutModal';
 import { ToastContainer } from '../components/Toast';
 import type { Role } from '../types/domain';
+import { apiClient, type ServiceTierStatus } from '../services/apiClient';
 
 export interface AppShellProps {
   children: React.ReactNode;
@@ -39,6 +40,26 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   } = useApp();
 
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [serviceStatus, setServiceStatus] = useState<ServiceTierStatus | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkServices = async () => {
+      try {
+        const statuses = await apiClient.getServiceStatuses();
+        if (mounted) setServiceStatus(statuses);
+      } catch {
+        // silent
+      }
+    };
+
+    checkServices();
+    const interval = setInterval(checkServices, 10000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const navigationItems = [
     { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
@@ -75,7 +96,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-[var(--canvas)] text-[var(--text-primary)] flex flex-col selection:bg-[var(--primary-subtle)] selection:text-[var(--primary)]">
-      {/* 1. Global Environment Banner (Sandbox vs Production) */}
+      {/* 1. Global Environment Banner (Sandbox vs Production + 3-Tier Indicators) */}
       <div
         className={clsx(
           'w-full px-4 py-1 text-[11px] font-semibold flex items-center justify-between border-b select-none transition-colors',
@@ -94,6 +115,38 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* 3-Tier Status Indicators */}
+          <div className="flex items-center gap-2 font-mono-financial text-[10px]">
+            {/* Go Backend Status */}
+            <span
+              className={clsx(
+                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border',
+                serviceStatus?.backend.isLive
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                  : 'bg-amber-50 text-amber-900 border-amber-300'
+              )}
+              title={serviceStatus?.backend.isLive ? `Backend connected (port 8080, latency ${serviceStatus.backend.latencyMs}ms)` : 'Backend running in Dual-Mode simulation'}
+            >
+              <span className={clsx('w-1.5 h-1.5 rounded-full', serviceStatus?.backend.isLive ? 'bg-emerald-600' : 'bg-amber-600')} />
+              <span>API: {serviceStatus?.backend.isLive ? 'Live :8080' : 'Simulated'}</span>
+            </span>
+
+            {/* FastAPI AI Service Status */}
+            <span
+              className={clsx(
+                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border',
+                serviceStatus?.aiService.isLive
+                  ? 'bg-purple-50 text-purple-800 border-purple-300'
+                  : 'bg-sky-50 text-sky-900 border-sky-300'
+              )}
+              title={serviceStatus?.aiService.isLive ? `AI Service connected (port 8000, latency ${serviceStatus.aiService.latencyMs}ms)` : 'AI running in Dual-Mode client fallback'}
+            >
+              <span className={clsx('w-1.5 h-1.5 rounded-full', serviceStatus?.aiService.isLive ? 'bg-purple-600' : 'bg-sky-600')} />
+              <span>AI: {serviceStatus?.aiService.isLive ? 'Live :8000' : 'Client Dual-Mode'}</span>
+            </span>
+          </div>
+
+          <span className="opacity-40">|</span>
           <button
             type="button"
             onClick={() =>

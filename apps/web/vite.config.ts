@@ -10,6 +10,10 @@ export default defineConfig({
   ],
   server: {
     proxy: {
+      '/v1/ai': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/v1': {
         target: 'http://localhost:8080',
         changeOrigin: true,
