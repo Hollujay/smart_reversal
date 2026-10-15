@@ -108,6 +108,11 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/reconciliation/reversals", o.Services.reconcileReversals)
 					pr.Get("/reports/summary", o.Services.summaryReport)
 				}
+				if o.Services.Reconciliation != nil {
+					pr.Post("/settlement-files", o.Services.uploadSettlementFile)
+					pr.Get("/reconciliation/breaks", o.Services.listReconBreaks)
+					pr.Post("/reconciliation/breaks/{id}/pair", o.Services.pairReconBreak)
+				}
 				if o.Services.KillSwitch != nil {
 					pr.Get("/killswitch", o.Services.getKillSwitch)
 					pr.Post("/killswitch", o.Services.changeKillSwitch)

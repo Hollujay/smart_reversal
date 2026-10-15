@@ -18,6 +18,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reconciliation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -40,6 +41,8 @@ type Services struct {
 	Cases *cases.Service
 	// Reversal enables the simulated reversal and approval routes (needs Cases).
 	Reversal *reversal.Service
+	// Reconciliation enables settlement file ingestion and break detection.
+	Reconciliation *reconciliation.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int

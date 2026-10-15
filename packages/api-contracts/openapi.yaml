@@ -601,6 +601,110 @@ paths:
                   simulated: { type: boolean }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/settlement-files:
+    post:
+      tags: [Reconciliation]
+      operationId: uploadSettlementFile
+      summary: Upload and reconcile a settlement file
+      description: |
+        Inbound settlement, statement or switch response file is parsed, stored,
+        and reconciled against core ledger transactions.
+      x-status: implemented
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, provider, kind, period_start, period_end]
+              properties:
+                file: { type: string, format: binary }
+                provider: { type: string }
+                kind: { type: string, enum: [SETTLEMENT, LEDGER_STATEMENT, SWITCH_RESPONSE] }
+                period_start: { type: string, format: date }
+                period_end: { type: string, format: date }
+                mapping_version: { type: string }
+      responses:
+        '202':
+          description: File parsed and reconciled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [file_id, sha256, total_records, matched_count, break_count]
+                properties:
+                  file_id: { type: string, format: uuid }
+                  sha256: { type: string }
+                  total_records: { type: integer }
+                  matched_count: { type: integer }
+                  tolerance_count: { type: integer }
+                  break_count: { type: integer }
+                  cases_opened_count: { type: integer }
+                  net_discrepancy_minor: { type: integer, format: int64 }
+        '400': { description: Malformed upload or missing file. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { description: File exceeds maximum allowed size. }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/reconciliation/breaks:
+    get:
+      tags: [Reconciliation]
+      operationId: listReconBreaks
+      summary: List reconciliation breaks
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: break_type, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50 } }
+      responses:
+        '200':
+          description: List of reconciliation breaks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, break_type, break_label, severity, status, instruction_ref, amount_diff_minor]
+                  count: { type: integer }
+                  simulated: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/reconciliation/breaks/{id}/pair:
+    post:
+      tags: [Reconciliation]
+      operationId: pairReconBreak
+      summary: Manually pair a reconciliation break
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes: { type: string }
+      responses:
+        '200':
+          description: Updated break record.
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { description: Invalid break id. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/reports/summary:
     get:
       tags: [Reversals]
