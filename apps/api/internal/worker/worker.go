@@ -10,10 +10,13 @@ import (
 	"net"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/smartreversal/smartreversal/apps/api/internal/detect"
 	"github.com/smartreversal/smartreversal/apps/api/internal/outbox"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/redisx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 	"github.com/smartreversal/smartreversal/apps/api/internal/stream"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
@@ -36,6 +39,9 @@ type Deps struct {
 	// stuck-transaction sweep every SweepInterval (default 30 seconds).
 	Detector      *detect.Detector
 	SweepInterval time.Duration
+	// Reversal, when set, makes each sweep also run the simulated reversal
+	// automation and advance reversals still in flight.
+	Reversal *reversal.Service
 }
 
 // Run starts every background task and blocks until ctx is cancelled or one
@@ -104,6 +110,40 @@ func sweepLoop(ctx context.Context, d Deps) error {
 			} else if n > 0 {
 				d.Logger.Info("sweep_opened_cases", "count", n)
 			}
+			if d.Reversal != nil {
+				reverseAll(ctx, d)
+			}
+		}
+	}
+}
+
+// reverseAll runs the reversal sweep for every institution. A failure for one
+// institution is logged and does not stop the others.
+func reverseAll(ctx context.Context, d Deps) {
+	rows, err := d.Pool.Query(ctx, `SELECT id FROM institutions ORDER BY code`)
+	if err != nil {
+		d.Logger.Error("reversal_sweep_failed", "error", err)
+		return
+	}
+	var tenants []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			d.Logger.Error("reversal_sweep_failed", "error", err)
+			return
+		}
+		tenants = append(tenants, id)
+	}
+	rows.Close()
+	for _, t := range tenants {
+		res, err := d.Reversal.Sweep(ctx, t)
+		if err != nil && ctx.Err() == nil {
+			d.Logger.Error("reversal_sweep_failed", "tenant", t.String(), "error", err)
+			continue
+		}
+		if len(res) > 0 {
+			d.Logger.Info("reversal_sweep", "tenant", t.String(), "handled", len(res))
 		}
 	}
 }

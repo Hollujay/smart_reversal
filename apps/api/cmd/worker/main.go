@@ -11,14 +11,18 @@ import (
 	"syscall"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
+	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/detect"
+	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/redisx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
+	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 	"github.com/smartreversal/smartreversal/apps/api/internal/worker"
 )
 
@@ -67,8 +71,20 @@ func run() error {
 	cfgSvc := &configsvc.Service{Audit: app}
 	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc}
 
+	caseSvc := &cases.Service{Audit: app, Config: cfgSvc}
+	policy, err := authz.Load(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("load permissions: %w", err)
+	}
+	// Execution is simulated: the sources below are the synthetic ones.
+	txnSvc := &txn.Service{}
+	revSvc := &reversal.Service{Pool: pool, Config: cfgSvc, Kill: &killswitch.Service{Audit: app}, Cases: caseSvc, Audit: app, Txn: txnSvc,
+		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
+		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}
+
 	return worker.Run(ctx, worker.Deps{
 		Detector:        detector,
+		Reversal:        revSvc,
 		Pool:            pool,
 		Redis:           rc,
 		Logger:          logger,
