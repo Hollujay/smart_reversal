@@ -16,6 +16,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
+	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
@@ -93,7 +94,7 @@ func run() error {
 			Signer:   signer,
 			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
-		Services: &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: &configsvc.Service{Audit: appender}},
+		Services: &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: &configsvc.Service{Audit: appender}, KillSwitch: &killswitch.Service{Audit: appender}},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{
 		Read:     cfg.ReadTimeout,
