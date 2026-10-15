@@ -418,6 +418,119 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /v1/config/{key}:
+    get:
+      tags: [Governance]
+      operationId: getConfig
+      summary: The approved configuration value in force
+      description: |
+        Returns the latest approved version whose effective date has passed, or
+        the version in force at `at`. A key with no approved value returns 404
+        `NOT_CONFIGURED`. Callers must stop, not assume a default. Needs a role
+        with the `change_rules` grant.
+      x-status: implemented
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, example: duplicate.window_seconds }
+        - { name: at, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The version in force.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/config/{key}/versions:
+    get:
+      tags: [Governance]
+      operationId: listConfigVersions
+      summary: Every version of a key, newest first, with decisions
+      x-status: implemented
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: History.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConfigVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/config/{key}/proposals:
+    post:
+      tags: [Governance]
+      operationId: proposeConfig
+      summary: Propose a new value
+      description: |
+        Creates a version that is not in force until someone else approves it.
+        Roles with the `propose` or `draft` scope of `change_rules` may do this.
+        The role that approves cannot also propose. Values are integers checked
+        against the key's range. A change cannot take effect in the past or more
+        than a year ahead.
+      x-status: implemented
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigProposal' }
+      responses:
+        '201':
+          description: Proposed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigVersion' }
+        '400': { description: Body is not a single JSON object with known fields. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/config/{key}/versions/{version}/decision:
+    post:
+      tags: [Governance]
+      operationId: decideConfig
+      summary: Approve or reject a proposed version
+      description: |
+        Needs the `approve` scope of `change_rules` and an MFA-backed token. The
+        person who proposed a version can never decide it (403 `SELF_APPROVAL`);
+        the database enforces this too. A version is decided once (409). A
+        rejection needs a reason.
+      x-status: implemented
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigDecision' }
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigVersion' }
+        '400': { description: Malformed body or version. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/killswitch:
     post:
       tags: [Governance]
@@ -618,6 +731,38 @@ components:
           items: { type: string }
         mfa: { type: boolean }
         expires_at: { type: string, format: date-time }
+    ConfigVersion:
+      type: object
+      required: [key, version, value, source_reference, verify_status, effective_from, proposed_by, reason, created_at, decision]
+      properties:
+        key: { type: string }
+        version: { type: integer }
+        value: { type: integer, format: int64 }
+        source_reference: { type: string }
+        verify_status: { type: string, enum: [confirmed, unverified, reported, draft, conflicting] }
+        effective_from: { type: string, format: date-time }
+        proposed_by: { type: string, format: uuid }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+        decision: { type: string, enum: [pending, approved, rejected] }
+        decided_by: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+        decision_reason: { type: string }
+    ConfigProposal:
+      type: object
+      required: [value, source_reference, effective_from, verify_status, reason]
+      properties:
+        value: { type: integer, format: int64 }
+        source_reference: { type: string, example: Scope FR-04 }
+        effective_from: { type: string, format: date-time }
+        verify_status: { type: string, enum: [confirmed, unverified, reported, draft, conflicting] }
+        reason: { type: string, minLength: 10 }
+    ConfigDecision:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approved, rejected] }
+        reason: { type: string }
     UnmaskRequest:
       type: object
       required: [token, reason]
