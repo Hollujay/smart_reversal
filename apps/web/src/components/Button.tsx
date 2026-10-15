@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
-export type ButtonSize = 'sm' | 'md' | 'lg';
+export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -34,6 +34,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       'inline-flex items-center justify-center font-medium transition-colors select-none rounded focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 disabled:pointer-events-none cursor-pointer';
 
     const sizeStyles = {
+      xs: 'text-[11px] px-2 py-0.5 gap-1 min-h-[24px]',
       sm: 'text-[12px] px-2.5 py-1 gap-1.5 min-h-[28px]',
       md: 'text-[13px] px-3.5 py-1.5 gap-2 min-h-[34px]',
       lg: 'text-[14px] px-4 py-2 gap-2.5 min-h-[40px]',

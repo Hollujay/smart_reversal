@@ -8,6 +8,9 @@ import type {
   FinancialStatus,
   Severity,
   Channel,
+  Role,
+  ExceptionTeam,
+  ExceptionNote,
 } from '../types/domain';
 import {
   INITIAL_TRANSACTIONS,
@@ -85,7 +88,13 @@ export const apiClient = {
   },
 
   // GET /exceptions
-  async getExceptions(params?: { severity?: Severity; channel?: Channel }): Promise<FinancialException[]> {
+  async getExceptions(params?: {
+    severity?: Severity;
+    channel?: Channel;
+    status?: FinancialStatus;
+    classificationCode?: string;
+    source?: string;
+  }): Promise<FinancialException[]> {
     let result = [...exceptions];
     if (params?.severity) {
       result = result.filter((e) => e.severity === params.severity);
@@ -93,7 +102,205 @@ export const apiClient = {
     if (params?.channel) {
       result = result.filter((e) => e.channel === params.channel);
     }
+    if (params?.status) {
+      result = result.filter((e) => e.status === params.status);
+    }
+    if (params?.classificationCode) {
+      result = result.filter((e) => e.classificationCode === params.classificationCode);
+    }
+    if (params?.source) {
+      result = result.filter((e) => e.source === params.source);
+    }
     return result;
+  },
+
+  // CLAIM exception (with optimistic concurrency check)
+  async claimException(
+    exceptionId: string,
+    analystId: string,
+    analystName: string,
+    expectedVersion: number
+  ): Promise<FinancialException> {
+    const exc = exceptions.find((e) => e.id === exceptionId);
+    if (!exc) throw new Error('Exception not found');
+
+    if (exc.version !== expectedVersion) {
+      const err = new Error('CONCURRENCY_CONFLICT');
+      (err as unknown as { currentVersion: number; updatedBy: string }).currentVersion = exc.version;
+      (err as unknown as { currentVersion: number; updatedBy: string }).updatedBy = exc.assignedTo || 'Another Analyst';
+      throw err;
+    }
+
+    const updated: FinancialException = {
+      ...exc,
+      assignedTo: analystId,
+      ownerName: analystName,
+      status: exc.status === 'detected' ? 'investigating' : exc.status,
+      version: exc.version + 1,
+      stateHistory: [
+        ...exc.stateHistory,
+        {
+          from: exc.status,
+          to: exc.status === 'detected' ? 'investigating' : exc.status,
+          reasonCode: 'CLAIMED_BY_ANALYST',
+          author: analystName,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exceptionId ? updated : e));
+    return updated;
+  },
+
+  // ASSIGN exception
+  async assignException(
+    exceptionId: string,
+    analystId: string,
+    analystName: string,
+    team: ExceptionTeam,
+    expectedVersion: number
+  ): Promise<FinancialException> {
+    const exc = exceptions.find((e) => e.id === exceptionId);
+    if (!exc) throw new Error('Exception not found');
+
+    if (exc.version !== expectedVersion) {
+      const err = new Error('CONCURRENCY_CONFLICT');
+      (err as unknown as { currentVersion: number; updatedBy: string }).currentVersion = exc.version;
+      (err as unknown as { currentVersion: number; updatedBy: string }).updatedBy = exc.assignedTo || 'Another Analyst';
+      throw err;
+    }
+
+    const updated: FinancialException = {
+      ...exc,
+      assignedTo: analystId,
+      ownerName: analystName,
+      team,
+      version: exc.version + 1,
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exceptionId ? updated : e));
+    return updated;
+  },
+
+  // UPDATE exception status with mandatory reason code
+  async updateExceptionStatus(
+    exceptionId: string,
+    newStatus: FinancialStatus,
+    reasonCode: string,
+    author: string,
+    justification: string,
+    expectedVersion: number
+  ): Promise<FinancialException> {
+    const exc = exceptions.find((e) => e.id === exceptionId);
+    if (!exc) throw new Error('Exception not found');
+
+    if (exc.version !== expectedVersion) {
+      const err = new Error('CONCURRENCY_CONFLICT');
+      (err as unknown as { currentVersion: number; updatedBy: string }).currentVersion = exc.version;
+      (err as unknown as { currentVersion: number; updatedBy: string }).updatedBy = exc.assignedTo || 'Another Analyst';
+      throw err;
+    }
+
+    const updated: FinancialException = {
+      ...exc,
+      status: newStatus,
+      version: exc.version + 1,
+      stateHistory: [
+        ...exc.stateHistory,
+        {
+          from: exc.status,
+          to: newStatus,
+          reasonCode,
+          author,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      notes: [
+        ...exc.notes,
+        {
+          id: `n-${Date.now()}`,
+          author,
+          authorRole: 'ANALYST_MAKER',
+          timestamp: new Date().toISOString(),
+          text: `Status changed to ${newStatus.toUpperCase()}: [${reasonCode}] ${justification}`,
+        },
+      ],
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exceptionId ? updated : e));
+    return updated;
+  },
+
+  // ADD note to exception
+  async addExceptionNote(
+    exceptionId: string,
+    author: string,
+    authorRole: Role,
+    text: string
+  ): Promise<FinancialException> {
+    const exc = exceptions.find((e) => e.id === exceptionId);
+    if (!exc) throw new Error('Exception not found');
+
+    const newNote: ExceptionNote = {
+      id: `note-${Date.now()}`,
+      author,
+      authorRole,
+      timestamp: new Date().toISOString(),
+      text,
+    };
+
+    const updated: FinancialException = {
+      ...exc,
+      version: exc.version + 1,
+      notes: [...exc.notes, newNote],
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exceptionId ? updated : e));
+    return updated;
+  },
+
+  // LINK exception to incident
+  async linkExceptionToIncident(
+    exceptionId: string,
+    incidentId: string,
+    incidentTitle: string
+  ): Promise<FinancialException> {
+    const exc = exceptions.find((e) => e.id === exceptionId);
+    if (!exc) throw new Error('Exception not found');
+
+    const updated: FinancialException = {
+      ...exc,
+      incidentId,
+      incidentTitle,
+      version: exc.version + 1,
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exceptionId ? updated : e));
+    return updated;
+  },
+
+  // BULK assign exceptions
+  async bulkAssignExceptions(
+    exceptionIds: string[],
+    analystId: string,
+    analystName: string,
+    team: ExceptionTeam
+  ): Promise<FinancialException[]> {
+    exceptions = exceptions.map((e) => {
+      if (exceptionIds.includes(e.id)) {
+        return {
+          ...e,
+          assignedTo: analystId,
+          ownerName: analystName,
+          team,
+          version: e.version + 1,
+        };
+      }
+      return e;
+    });
+
+    return exceptions.filter((e) => exceptionIds.includes(e.id));
   },
 
   // GET /investigations
