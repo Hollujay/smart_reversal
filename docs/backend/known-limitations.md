@@ -28,7 +28,7 @@ Time windows, waiting thresholds, approval limits, which exception codes may be 
 - Only reversal-oriented codes have automation: FAIL001 and DUP001 (the latter always needs an approver), and UNK001 is held. Other exception types are detected or entered manually but have no automated remediation.
 - The detector is driven by the transaction stream and a sweep. It needs the worker running. Without the worker, events are accepted and stored but no cases open.
 - The sweep processes tenants one after another and has no per-tenant concurrency control beyond the database locks. That is fine for a demo, not for volume.
-- Case assignment, escalation steps and SLA breach alerts are stored but not acted on.
+- Case assignment, escalation and SLA breach alerting are not implemented. SLA due times are calculated from approved clocks and shown, nothing acts on them.
 - No load or soak testing has been done.
 - Events from the AI service use the same ingestion path. There is no separate AI interface yet.
 
