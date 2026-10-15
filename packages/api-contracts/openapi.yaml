@@ -1018,6 +1018,12 @@ components:
         institution: { type: string, example: DEMO-BANK }
         email: { type: string }
         password: { type: string, format: password }
+        otp:
+          type: string
+          description: |
+            Six-digit code from the development authenticator (synthetic, ADR 0003 D20).
+            Only a login with a valid, unused code gets a token with `mfa: true`, which
+            approving a reversal requires. A wrong code fails the login.
     LoginResponse:
       type: object
       required: [access_token, token_type, expires_at, user_id, roles]
@@ -1029,6 +1035,7 @@ components:
         roles:
           type: array
           items: { type: string }
+        mfa: { type: boolean, description: True only when a valid one-time code was supplied. }
     Me:
       type: object
       required: [user_id, tenant_id, roles, mfa, expires_at]
