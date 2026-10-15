@@ -69,6 +69,10 @@ func TestTheDemonstrationScenarioRunsEndToEndAndCanBeRepeated(t *testing.T) {
 			t.Fatalf("run %d: %+v", run, rep)
 		}
 
+		if n := count(t, env, tenant, `SELECT count(*) FROM cases WHERE tenant_id = $1`); n != 3 {
+			t.Fatalf("run %d: the scenario should open exactly three cases, got %d", run, n)
+		}
+
 		// The failed transfer is reversed and verified, and the case is resolved.
 		if rep.Fail.Outcome != "reversed" || rep.Fail.Financial != "VERIFIED" || rep.Fail.CaseStatus != "RESOLVED" {
 			t.Fatalf("run %d failed transfer: %+v", run, rep.Fail)

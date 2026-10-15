@@ -29,9 +29,9 @@ import (
 const PolicyLabel = "SYNTHETIC DEMO POLICY - not approved for production"
 
 const (
-	// Tokens stand in for account numbers. They are not real accounts.
-	tokPayer = "acct_00000000000000000000000000d3a001"
-	tokPayee = "acct_00000000000000000000000000d3a002"
+	// Tokens stand in for account numbers. They are not real accounts. Each
+	// scenario transfer has its own payer and payee so that one is never
+	// mistaken for a duplicate of another.
 
 	FailRef = "DEMO-FAIL-001"
 	DupRef1 = "DEMO-DUP-001"
@@ -229,13 +229,25 @@ func (p *player) step(what, detail string) {
 	p.rep.Steps = append(p.rep.Steps, Step{N: p.n, What: what, Detail: detail})
 }
 
-func (p *player) event(ctx context.Context, ref, typ string, at time.Time, session string) (uuid.UUID, error) {
+// party is the synthetic payer and payee of one scenario transfer.
+type party struct {
+	payer, payee string
+	amount       int64
+}
+
+var (
+	failParty = party{"acct_00000000000000000000000000d3a001", "acct_00000000000000000000000000d3b001", 1850000}
+	dupParty  = party{"acct_00000000000000000000000000d3a002", "acct_00000000000000000000000000d3b002", 920000}
+	unkParty  = party{"acct_00000000000000000000000000d3a003", "acct_00000000000000000000000000d3b003", 2750000}
+)
+
+func (p *player) event(ctx context.Context, who party, ref, typ string, at time.Time, session string) (uuid.UUID, error) {
 	var res txn.Result
 	err := p.env.Pool.WithTenant(ctx, p.tenant, func(tx pgx.Tx) error {
 		var err error
 		res, err = p.env.Ingest.Ingest(ctx, tx, p.tenant, txn.Envelope{SourceSystem: "DEMO_SWITCH", SourceEventRef: ref + ":" + typ, EventType: typ, SourceTS: at,
-			Txn: txn.Core{InstructionRef: ref, Channel: "MOBILE", Rail: "NIP", AmountMinor: 1850000, Currency: "NGN",
-				DebitAccountToken: tokPayer, BeneficiaryToken: tokPayee, SessionID: session}})
+			Txn: txn.Core{InstructionRef: ref, Channel: "MOBILE", Rail: "NIP", AmountMinor: txn.Amount(who.amount), Currency: "NGN",
+				DebitAccountToken: who.payer, BeneficiaryToken: who.payee, SessionID: session}})
 		return err
 	})
 	return res.TxnID, err
@@ -284,9 +296,9 @@ func Play(ctx context.Context, env *Env, tenant uuid.UUID) (Report, error) {
 	rep := Report{Simulated: true}
 	p := &player{env: env, tenant: tenant, rep: &rep}
 	at := time.Now().Add(-10 * time.Minute)
-	seed := func(ref, outcome string) error {
+	seed := func(who party, ref, outcome string) error {
 		return env.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
-			if err := reversal.SeedDebit(ctx, tx, tenant, ref, 1850000, "NGN"); err != nil {
+			if err := reversal.SeedDebit(ctx, tx, tenant, ref, who.amount, "NGN"); err != nil {
 				return err
 			}
 			return reversal.ScriptStatus(ctx, tx, tenant, ref, outcome, false, false, 0)
@@ -295,17 +307,17 @@ func Play(ctx context.Context, env *Env, tenant uuid.UUID) (Report, error) {
 
 	// 1. A transfer is debited and the beneficiary credit fails.
 	for i, typ := range []string{txn.EvDebitPosted, txn.EvTransferSent} {
-		if _, err := p.event(ctx, FailRef, typ, at.Add(time.Duration(i)*time.Second), "S-"+FailRef); err != nil {
+		if _, err := p.event(ctx, failParty, FailRef, typ, at.Add(time.Duration(i)*time.Second), "S-"+FailRef); err != nil {
 			return rep, err
 		}
 	}
 	p.step("Customer debit posted and transfer sent", FailRef)
-	failID, err := p.event(ctx, FailRef, txn.EvCreditFailed, at.Add(2*time.Second), "S-"+FailRef)
+	failID, err := p.event(ctx, failParty, FailRef, txn.EvCreditFailed, at.Add(2*time.Second), "S-"+FailRef)
 	if err != nil {
 		return rep, err
 	}
 	p.step("Beneficiary credit failed; ingestion accepted the event", FailRef)
-	if err := seed(FailRef, reversal.OutcomeFailure); err != nil {
+	if err := seed(failParty, FailRef, reversal.OutcomeFailure); err != nil {
 		return rep, err
 	}
 	failCase, err := p.detect(ctx, failID, cases.CodeNoCredit)
@@ -323,18 +335,18 @@ func Play(ctx context.Context, env *Env, tenant uuid.UUID) (Report, error) {
 	}
 
 	// 2. The same transfer is debited twice.
-	if _, err := p.event(ctx, DupRef1, txn.EvDebitPosted, at, "S-"+DupRef1); err != nil {
+	if _, err := p.event(ctx, dupParty, DupRef1, txn.EvDebitPosted, at, "S-"+DupRef1); err != nil {
 		return rep, err
 	}
-	dupID, err := p.event(ctx, DupRef2, txn.EvDebitPosted, at.Add(3*time.Second), "S-"+DupRef1)
+	dupID, err := p.event(ctx, dupParty, DupRef2, txn.EvDebitPosted, at.Add(3*time.Second), "S-"+DupRef1)
 	if err != nil {
 		return rep, err
 	}
-	if _, err := p.event(ctx, DupRef1, txn.EvCreditConfirmed, at.Add(time.Second), "S-"+DupRef1); err != nil {
+	if _, err := p.event(ctx, dupParty, DupRef1, txn.EvCreditConfirmed, at.Add(time.Second), "S-"+DupRef1); err != nil {
 		return rep, err
 	}
 	for _, ref := range []string{DupRef1, DupRef2} {
-		if err := seed(ref, reversal.OutcomeFailure); err != nil {
+		if err := seed(dupParty, ref, reversal.OutcomeFailure); err != nil {
 			return rep, err
 		}
 	}
@@ -357,15 +369,15 @@ func Play(ctx context.Context, env *Env, tenant uuid.UUID) (Report, error) {
 
 	// 3. A transfer whose outcome nobody knows.
 	for i, typ := range []string{txn.EvDebitPosted, txn.EvTransferSent} {
-		if _, err := p.event(ctx, UnkRef, typ, at.Add(time.Duration(i)*time.Second), "S-"+UnkRef); err != nil {
+		if _, err := p.event(ctx, unkParty, UnkRef, typ, at.Add(time.Duration(i)*time.Second), "S-"+UnkRef); err != nil {
 			return rep, err
 		}
 	}
-	unkID, err := p.event(ctx, UnkRef, txn.EvTransferTimeout, at.Add(2*time.Second), "S-"+UnkRef)
+	unkID, err := p.event(ctx, unkParty, UnkRef, txn.EvTransferTimeout, at.Add(2*time.Second), "S-"+UnkRef)
 	if err != nil {
 		return rep, err
 	}
-	if err := seed(UnkRef, reversal.OutcomeUnknown); err != nil {
+	if err := seed(unkParty, UnkRef, reversal.OutcomeUnknown); err != nil {
 		return rep, err
 	}
 	unkCase, err := p.detect(ctx, unkID, cases.CodeUnknown)
