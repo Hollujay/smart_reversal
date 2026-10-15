@@ -424,3 +424,33 @@ func TestMoneyFormatting(t *testing.T) {
 		}
 	}
 }
+
+func TestStateMachineAllowsExternalDependencyMoves(t *testing.T) {
+	if !CanTransition(StUnderInvestigation, StExternalDependency) {
+		t.Errorf("UNDER_INVESTIGATION -> EXTERNAL_DEPENDENCY should be allowed")
+	}
+	if !CanTransition(StExternalDependency, StUnderInvestigation) {
+		t.Errorf("EXTERNAL_DEPENDENCY -> UNDER_INVESTIGATION should be allowed")
+	}
+	if CanTransition(StDetected, StExternalDependency) {
+		t.Errorf("DETECTED -> EXTERNAL_DEPENDENCY should not be allowed")
+	}
+	if CanTransition(StExternalDependency, StResolved) {
+		t.Errorf("EXTERNAL_DEPENDENCY -> RESOLVED should not be allowed")
+	}
+}
+
+func TestEscalateAndAutoAssignValidation(t *testing.T) {
+	svc := &Service{}
+	ctx := context.Background()
+	_, err := svc.Escalate(ctx, nil, uuid.New(), uuid.New(), System, "SUPERVISOR", "")
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("Escalate with empty reason should return ErrInvalid, got %v", err)
+	}
+
+	_, err = svc.AutoAssign(ctx, nil, uuid.New(), uuid.New(), System, "SUPERVISOR")
+	if err == nil || !strings.Contains(err.Error(), "routing service not configured") {
+		t.Errorf("AutoAssign without routing should fail, got %v", err)
+	}
+}
+

@@ -367,6 +367,63 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/cases/{id}/escalate:
+    post:
+      tags: [Cases]
+      operationId: escalateCase
+      summary: Escalate a case to a higher tier or supervisor
+      description: |
+        Bumps priority to CRITICAL, assigns the on-call supervisor if available,
+        records audit history, and emits a case.escalated event.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                target_role: { type: string, default: 'SUPERVISOR' }
+                reason: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: The escalated case.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '400': { description: Malformed body. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/cases/sweep-sla:
+    post:
+      tags: [Cases]
+      operationId: sweepSLAs
+      summary: Detect and escalate breached regulatory SLAs
+      description: |
+        Scans all open cases past their SLA due timestamp, raises priority to CRITICAL,
+        triggers automated escalation to supervisor, and emits case.sla_breached.
+      x-status: implemented
+      responses:
+        '200':
+          description: Breached cases processed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  breached_count: { type: integer }
+                  cases:
+                    type: array
+                    items: { $ref: '#/components/schemas/Case' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/complaints:
     post:
       tags: [Cases]

@@ -20,6 +20,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reconciliation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/routing"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
@@ -43,6 +44,8 @@ type Services struct {
 	Reversal *reversal.Service
 	// Reconciliation enables settlement file ingestion and break detection.
 	Reconciliation *reconciliation.Service
+	// Routing enables operator shift assignments and delegations.
+	Routing *routing.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int

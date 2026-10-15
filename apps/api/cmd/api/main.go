@@ -22,6 +22,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reconciliation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/routing"
 	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
@@ -92,7 +93,8 @@ func run() error {
 	configService := &configsvc.Service{Audit: appender}
 	killService := &killswitch.Service{Audit: appender}
 	txnService := &txn.Service{}
-	caseService := &cases.Service{Audit: appender, Config: configService}
+	routingService := &routing.Service{Audit: appender}
+	caseService := &cases.Service{Audit: appender, Config: configService, Routing: routingService}
 	// Execution is simulated: the sources below are the synthetic ones. No real
 	// provider adapter exists in this build.
 	reversalService := &reversal.Service{Pool: pool, Config: configService, Kill: killService, Cases: caseService, Audit: appender, Txn: txnService,
@@ -113,6 +115,7 @@ func run() error {
 			Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService,
 			Txn: txnService, Cases: caseService, Reversal: reversalService,
 			Reconciliation: &reconciliation.Service{Pool: pool, Cases: caseService},
+			Routing:        routingService,
 		},
 		ServiceVerifier: &servauth.Verifier{Pool: pool},
 	})

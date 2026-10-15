@@ -96,6 +96,8 @@ func NewRouter(o Options) http.Handler {
 					pr.Post("/cases/{id}/notes", o.Services.addCaseNote)
 					pr.Post("/cases/{id}/evidence", o.Services.addCaseEvidence)
 					pr.Get("/cases/{id}/customer-status", o.Services.customerCaseStatus)
+					pr.Post("/cases/{id}/escalate", o.Services.escalateCase)
+					pr.Post("/cases/sweep-sla", o.Services.sweepSLAs)
 					pr.Post("/complaints", o.Services.submitComplaint)
 				}
 				if o.Services.Reversal != nil && o.Services.Cases != nil {
