@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,14 +31,25 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+const (
+	// MinSecretLength is the shortest HMAC signing secret accepted. Shorter
+	// secrets are rejected at construction so a blank or placeholder value
+	// cannot produce tokens that validate.
+	MinSecretLength = 32
+
+	tokenIssuer = "smartreversal-api"
+)
+
 type AuthService struct {
 	secretKey []byte
 }
 
-func NewAuthService(secret string) *AuthService {
-	return &AuthService{
-		secretKey: []byte(secret),
+// NewAuthService returns an AuthService, or an error if the secret is too short.
+func NewAuthService(secret string) (*AuthService, error) {
+	if len(secret) < MinSecretLength {
+		return nil, fmt.Errorf("auth: signing secret must be at least %d bytes", MinSecretLength)
 	}
+	return &AuthService{secretKey: []byte(secret)}, nil
 }
 
 type LoginRequest struct {
@@ -61,7 +73,7 @@ func (s *AuthService) GenerateToken(userID, email string, role Role, duration ti
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "smartreversal-api",
+			Issuer:    tokenIssuer,
 		},
 	}
 
@@ -72,11 +84,12 @@ func (s *AuthService) GenerateToken(userID, email string, role Role, duration ti
 // ValidateToken verifies and extracts claims from a raw bearer token.
 func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
 		return s.secretKey, nil
-	})
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuer(tokenIssuer),
+	)
 
 	if err != nil {
 		return nil, err
@@ -116,7 +129,9 @@ func (s *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRoles verifies that the authenticated user possesses one of the allowed roles.
+// RequireRoles verifies that the authenticated user holds one of the allowed
+// roles. No role passes implicitly: ADMIN must be listed like any other role,
+// because an implicit bypass would defeat maker-checker separation.
 func RequireRoles(allowedRoles ...Role) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +142,7 @@ func RequireRoles(allowedRoles ...Role) func(next http.Handler) http.Handler {
 			}
 
 			for _, role := range allowedRoles {
-				if claims.Role == role || claims.Role == RoleAdmin {
+				if claims.Role == role {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -146,45 +161,15 @@ func GetUserClaims(ctx context.Context) *Claims {
 	return nil
 }
 
-// HandleLogin authenticates pre-seeded demo or database users.
+// HandleLogin is disabled. The earlier implementation issued a token for any
+// email without checking a credential and defaulted unknown users to the
+// analyst role. Credential verification arrives in phase B1. Until then this
+// endpoint never issues a token.
 func (s *AuthService) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
-		return
-	}
-
-	var role Role
-	var userID string
-	switch req.Email {
-	case "analyst@smartreversal.io":
-		role = RoleAnalystMaker
-		userID = "usr-analyst-001"
-	case "supervisor@smartreversal.io", "checker@smartreversal.io":
-		role = RoleSupervisorChecker
-		userID = "usr-supervisor-002"
-	case "auditor@smartreversal.io":
-		role = RoleAuditor
-		userID = "usr-auditor-003"
-	default:
-		// Default to analyst for development login
-		role = RoleAnalystMaker
-		userID = "usr-dev-001"
-	}
-
-	token, err := s.GenerateToken(userID, req.Email, role, 24*time.Hour)
-	if err != nil {
-		http.Error(w, `{"error":"failed to generate token"}`, http.StatusInternalServerError)
-		return
-	}
-
-	resp := AuthTokenResponse{
-		Token:     token,
-		Role:      role,
-		UserID:    userID,
-		ExpiresIn: 86400,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(http.StatusNotImplemented)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "LOGIN_DISABLED",
+		"message": "authentication is not available until phase B1",
+	})
 }

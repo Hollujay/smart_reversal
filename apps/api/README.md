@@ -1,17 +1,31 @@
-# SMARTREVERSAL Core API Service
+# SMARTREVERSAL Backend (Go)
 
-Go-based core financial operations and ledger integration service.
+Modular monolith. Four binaries share `internal/` and one PostgreSQL database.
 
-## Structure
-- `cmd/api`: Service entrypoint
-- `internal/config`: Environment configurations
-- `internal/observability`: Structured logging and metrics
-- `internal/auth`: Maker-checker authorization and JWT validation
-- `internal/transactions`: Ingestion and query engine
-- `internal/reconciliation`: Multi-source reconciliation engine
-- `internal/exceptions`: Financial discrepancy and exception tracking
-- `internal/investigations`: Investigation workflows
-- `internal/reversals`: Controlled dual-authorization reversal dispatch
-- `internal/audit`: Cryptographic hash-chained audit trail
-- `internal/integrations`: Gateway and external adapter clients
-- `migrations`: Database migration scripts
+| Binary | Purpose |
+|---|---|
+| `cmd/api` | HTTP API under `/v1` |
+| `cmd/worker` | Outbox relay to Redis Streams, health endpoint |
+| `cmd/migrate` | Apply, revert and report migrations |
+| `cmd/mock` | Simulated external service (`MOCK_KIND=status\|reversal\|notify`) |
+
+## Packages
+
+| Package | Role |
+|---|---|
+| `internal/config` | Typed, validated environment configuration |
+| `internal/server` | Router, health and readiness, graceful serve |
+| `internal/platform/httpx` | Error envelope, JSON decoding, pagination, idempotency key |
+| `internal/platform/db` | PostgreSQL pool and transaction helper |
+| `internal/platform/redisx` | Redis client |
+| `internal/platform/migrate` | Migration runner |
+| `internal/outbox` | Transactional outbox and relay |
+| `internal/stream` | Idempotent stream consumer, dead letters, replay |
+| `internal/worker` | Worker process wiring |
+| `internal/mocks` | Track H stubs |
+| `internal/observability` | Structured logging, trace ids |
+| `internal/contract` | Tests tying code to `packages/api-contracts` |
+| `internal/auth` | **Not usable.** Login is disabled. Replaced in B1 |
+| `internal/audit`, `internal/transactions`, `internal/exceptions` | In-memory prototypes, not wired. Replaced in later phases |
+
+See `docs/backend/local-setup.md` to run it and `docs/architecture/c4.md` for the diagrams.

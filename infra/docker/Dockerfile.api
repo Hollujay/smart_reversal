@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.24-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum* ./
-RUN go mod download || true
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/api ./cmd/api
+# Build context is the repository root (see compose.yaml).
+# One image carries every backend binary. Compose chooses which one to run.
+FROM golang:1.27.2-alpine AS builder
+WORKDIR /src/apps/api
+COPY apps/api/go.mod apps/api/go.sum ./
+RUN go mod download
+COPY apps/api/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/ ./cmd/...
 
 FROM alpine:3.20
+RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
-COPY --from=builder /app/api /app/api
+COPY --from=builder /out/ /app/
+USER app
 EXPOSE 8080
-ENTRYPOINT ["/app/api"]
+CMD ["/app/api"]

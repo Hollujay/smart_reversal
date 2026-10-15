@@ -24,6 +24,32 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: smartreversal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d smartreversal_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://app:ci_only_password@localhost:5432/smartreversal_test?sslmode=disable
+      TEST_REDIS_ADDR: localhost:6379
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -31,17 +57,50 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
 
       - name: Verify Go Modules
         run: go mod verify
 
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Build
+        run: go build ./...
+
       - name: Run Go Vet & Lints
         run: go vet ./...
 
+      # Integration tests share one database, so packages run one at a time.
+      # A test that skips for lack of services fails this job instead.
       - name: Run Go Tests with Race Detector
-        run: go test -v -race ./...
+        run: |
+          go test -p 1 -race -count=1 -v ./... | tee test.log
+          if grep -q -- '--- SKIP' test.log; then
+            echo "A test was skipped; integration services are required in CI" >&2
+            exit 1
+          fi
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  # ----------------------------------------------------------------------------
+  # Secret scan over the full history
+  # ----------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 \
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner
 
   # ----------------------------------------------------------------------------
   # Job 2: Python AI Service Verification

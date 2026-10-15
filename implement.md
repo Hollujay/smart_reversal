@@ -6,7 +6,7 @@
 - **Operating System**: Windows (AMD64)
 - **Shell**: PowerShell (`pwsh`)
 - **Installed Toolchain**:
-  - **Go**: `1.26.3`
+  - **Go**: `1.27.2` (target; originally scaffolded on 1.26.3)
   - **Node.js**: `v26.5.0`
   - **npm**: `12.0.2`
   - **Python**: `3.13.3`
