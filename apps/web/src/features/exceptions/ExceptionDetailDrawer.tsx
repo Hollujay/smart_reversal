@@ -67,6 +67,10 @@ export const ExceptionDetailDrawer: React.FC<ExceptionDetailDrawerProps> = ({
       timestamp: exception.debitTimestamp,
       details: `Debit posted: ${exception.currency} ${Number(exception.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}. STAN: ${exception.stan || '009901'}.`,
       verified: true,
+      freshness: 'FRESH',
+      freshnessLabel: 'Verified Fresh',
+      isStale: false,
+      canSupportAction: true,
     },
     {
       id: `ev-fact-2`,
@@ -76,6 +80,10 @@ export const ExceptionDetailDrawer: React.FC<ExceptionDetailDrawerProps> = ({
       timestamp: exception.detectedAt,
       details: `RRN: ${exception.rrn || '9901847120'}. Root cause code: ${exception.rootCause}. Status: ${exception.status}.`,
       verified: true,
+      freshness: 'FRESH',
+      freshnessLabel: 'Verified Fresh',
+      isStale: false,
+      canSupportAction: true,
     },
     {
       id: `ev-inf-1`,
@@ -84,6 +92,10 @@ export const ExceptionDetailDrawer: React.FC<ExceptionDetailDrawerProps> = ({
       source: 'XGBoost Heuristic Classifier',
       details: `Classification: ${exception.classificationCode}. Confidence: ${exception.modelConfidence}%. ${exception.modelExplanation}`,
       verified: false,
+      freshness: 'FRESH',
+      freshnessLabel: 'AI Inference Fresh',
+      isStale: false,
+      canSupportAction: true,
     },
     {
       id: `ev-unres-1`,
@@ -94,6 +106,10 @@ export const ExceptionDetailDrawer: React.FC<ExceptionDetailDrawerProps> = ({
         ? `Customer logged ${exception.repeatContactCount} repeat inquiries. Awaiting proof of beneficiary non-credit.`
         : 'Counterparty receiving institution has not returned credit confirmation message.',
       verified: false,
+      freshness: 'DEGRADED',
+      freshnessLabel: 'Degraded Source (14m lag)',
+      isStale: false,
+      canSupportAction: false,
     },
   ];
 
