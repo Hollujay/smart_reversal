@@ -146,45 +146,15 @@ func GetUserClaims(ctx context.Context) *Claims {
 	return nil
 }
 
-// HandleLogin authenticates pre-seeded demo or database users.
+// HandleLogin is disabled. The earlier implementation issued a token for any
+// email without checking a credential and defaulted unknown users to the
+// analyst role. Credential verification arrives in phase B1. Until then this
+// endpoint never issues a token.
 func (s *AuthService) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
-		return
-	}
-
-	var role Role
-	var userID string
-	switch req.Email {
-	case "analyst@smartreversal.io":
-		role = RoleAnalystMaker
-		userID = "usr-analyst-001"
-	case "supervisor@smartreversal.io", "checker@smartreversal.io":
-		role = RoleSupervisorChecker
-		userID = "usr-supervisor-002"
-	case "auditor@smartreversal.io":
-		role = RoleAuditor
-		userID = "usr-auditor-003"
-	default:
-		// Default to analyst for development login
-		role = RoleAnalystMaker
-		userID = "usr-dev-001"
-	}
-
-	token, err := s.GenerateToken(userID, req.Email, role, 24*time.Hour)
-	if err != nil {
-		http.Error(w, `{"error":"failed to generate token"}`, http.StatusInternalServerError)
-		return
-	}
-
-	resp := AuthTokenResponse{
-		Token:     token,
-		Role:      role,
-		UserID:    userID,
-		ExpiresIn: 86400,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(http.StatusNotImplemented)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "LOGIN_DISABLED",
+		"message": "authentication is not available until phase B1",
+	})
 }
