@@ -114,9 +114,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           {/* Logo & Platform Title */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className="w-8 h-8 rounded bg-[var(--primary)] text-white flex items-center justify-center font-bold text-[15px] shadow-xs">
-                SR
-              </span>
+              <img src="/logo.png" alt="SMARTREVERSAL Emblem" className="w-8 h-8 object-contain" />
               <div>
                 <div className="font-bold text-[15px] tracking-tight text-[var(--text-primary)] flex items-center gap-1.5">
                   <span>SMARTREVERSAL</span>

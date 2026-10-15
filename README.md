@@ -1,6 +1,19 @@
-# 🪙 SMARTREVERSAL
+<p align="center">
+  <img src="docs/assets/logo.png" alt="SMARTREVERSAL Logo" width="130" height="130" />
+</p>
 
-> **AI-Powered Transaction Investigation, Reconciliation, Exception Management, and Controlled Financial Transaction Resolution Platform.**
+<h1 align="center">SMARTREVERSAL</h1>
+
+<p align="center">
+  <strong>AI-Powered Transaction Investigation, Reconciliation, Exception Management, and Controlled Financial Transaction Resolution Platform</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Status-Active_Development-brightgreen?style=flat-square" alt="Status" />
+  <img src="https://img.shields.io/badge/AI_Tests-58%2F58_Passing-blue?style=flat-square" alt="AI Tests" />
+  <img src="https://img.shields.io/badge/Maker--Checker-Enforced-indigo?style=flat-square" alt="Maker Checker" />
+  <img src="https://img.shields.io/badge/License-Proprietary-red?style=flat-square" alt="License" />
+</p>
 
 SMARTREVERSAL is an enterprise financial operations platform built for banks, fintech institutions, payment service providers (PSPs), and payment switches to automate the detection, investigation, reconciliation, and controlled remediation of transactional anomalies, settlement discrepancies, and payment exceptions.
 
