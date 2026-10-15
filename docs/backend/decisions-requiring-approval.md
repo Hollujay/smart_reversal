@@ -8,7 +8,7 @@ Last updated: 2026-10-15. "Blocks" says which phase cannot finish, or start, wit
 |---|---|---|
 | D1 | Backend language | Go with Chi. Python stays with the AI service only. Approved 2026-10-15. See ADR 0002. |
 | D2 | Messaging | Redis Streams with a PostgreSQL transactional outbox. PostgreSQL is authoritative. Redis is never the source of truth for financial outcomes. Approved 2026-10-15. |
-| D11 | Go version | Go 1.27.2 across `go.mod`, CI, Docker and docs, if dependencies are compatible. Any blocker gets reported before an alternative is chosen. |
+| D11 | Go version | Go 1.27.2 across `go.mod`, CI, Docker and docs, if dependencies are compatible. Done: all direct dependencies build, vet and test on 1.27.2, and the Docker image builds on `golang:1.27.2-alpine`. No blocker found. |
 
 ## Open, and what they block
 

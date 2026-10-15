@@ -1,6 +1,6 @@
 # B0 Implementation Sequence
 
-Status: approved to start 2026-10-15 for D1 (Go) and D2 (Redis Streams with PostgreSQL outbox). Code lands on `feat/backend-b0-foundation`, separate from the documentation PR. Each row is one commit with its tests, pushed on its own after verification.
+Status: executed. The table below is the plan as approved. What was actually delivered, including the differences, is in `b0-report.md`. Code landed on `feat/backend-b0-foundation`, separate from the documentation PR.
 
 Items are ordered by dependency. Rows marked (needs Docker) or (needs services) need Postgres or Redis running and say so in the verification result if they were not run.
 

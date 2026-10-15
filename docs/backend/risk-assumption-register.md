@@ -8,7 +8,7 @@ Status: draft. Review at the end of each phase.
 |---|---|---|---|---|---|
 | K1 | Stack disagreement between brief and repo causes rework | Closed | Closed | D1 decided: Go. See ADR 0002 | Backend lead |
 | K2 | Requirements misread from the playbooks | Medium | Medium | Matrix reconciled against the PDFs on 2026-10-15. The Complete Playbook was checked for backend content only. | Backend |
-| K3 | Existing dev login ships by accident | Medium | High | Remove in B1 first commit, test that unknown users get 401 | Backend |
+| K3 | Existing dev login ships by accident | Closed in B0 | High | Handler disabled and tests assert 501 with no token. The route is not mounted. Real login arrives in B1 | Backend |
 | K4 | Tenant filter missed in one query | Medium | High | Row-level security plus isolation tests | Backend |
 | K5 | Reversal executed twice under retry or concurrency | Medium | Critical | Idempotency key, unique remediation lock, concurrency test | Backend |
 | K6 | Timeout treated as failure and money reversed wrongly | Medium | Critical | Five outcome classes, status-query-first, tests for S1 | Backend |
@@ -16,11 +16,11 @@ Status: draft. Review at the end of each phase.
 | K8 | Contract drift with frontend | High | Medium | OpenAPI first, contract tests | Backend and frontend |
 | K9 | Simulated data mistaken for verified data in reports | Medium | High | `simulated` flag, separate report sections | Backend |
 | K10 | Real customer data enters fixtures | Low | High | Synthetic generator only, review fixtures in PRs | All |
-| K11 | CI red from day one (missing go.sum, version mismatch) | Certain | Low | Fix in first B0 commit | Backend |
+| K11 | CI red from day one (missing go.sum, version mismatch) | Closed locally | Low | go.sum committed, versions aligned. The updated workflow has not yet run on GitHub | Backend |
 | K12 | Hackathon time pressure tempts skipping safety tests | Medium | High | Safety tests are exit criteria, not optional | Backend lead |
 | K13 | Outbox relay publishes twice or stalls, consumers double-apply | Medium | High | Idempotent consumers, unique constraints, relay lag metric, replay test | Backend |
 | K14 | Redis loss or restart drops stream state | Medium | Medium | PostgreSQL stays authoritative, outbox replay rebuilds streams | Backend |
-| K15 | Go 1.27.2 incompatibility with a dependency | Low | Medium | Verify at B0 start, report exact blocker before choosing an alternative | Backend |
+| K15 | Go 1.27.2 incompatibility with a dependency | Closed | Medium | Verified: no incompatibility found | Backend |
 | K16 | Frontend built against types that differ from the shared contract | High | Medium | Resolve D14 and D15 before contract freeze, contract tests | Backend and frontend |
 | K17 | Press-reported regulatory clocks used as fact | Medium | High | Configuration with VERIFY status, shown to users as such | Backend |
 

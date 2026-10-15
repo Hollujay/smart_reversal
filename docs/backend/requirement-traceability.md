@@ -133,5 +133,5 @@ Source: v2 Shared Preamble rules 1 to 11 and brief section 5. Each needs a named
 
 | Phase | Status |
 |---|---|
-| B0 | In progress. This document and the code branch are its first outputs |
+| B0 | Code delivered on `feat/backend-b0-foundation`, awaiting review. Exit gate assessed in `b0-report.md`: met for everything that was run, with listed exceptions |
 | B1 to B11 | Not started |
