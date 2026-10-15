@@ -1,4 +1,5 @@
 #!/bin/sh
-# Check services health
-curl -f http://localhost:8080/health || exit 1
-curl -f http://localhost:8000/health || exit 1
+# Check that the running services report ready.
+curl -fsS http://localhost:8080/v1/ready || exit 1
+curl -fsS http://localhost:8081/v1/ready || exit 1
+curl -fsS http://localhost:8000/health || exit 1
