@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
+	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
@@ -58,15 +60,23 @@ func run() error {
 		return err
 	}
 
+	policy, err := authz.Load(ctx, pool)
+	if err != nil {
+		return err
+	}
+	appender := &audit.Appender{}
+
 	handler := server.NewRouter(server.Options{
 		Logger:   logger,
 		Version:  version,
 		Checkers: []server.Checker{pool},
 		Verifier: verifier,
 		Auth: &identity.Authenticator{
-			Store:  &identity.PGUserStore{Pool: pool},
-			Signer: signer,
+			Store:    &identity.PGUserStore{Pool: pool},
+			Signer:   signer,
+			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
+		Services: &server.Services{Pool: pool, Policy: policy, Audit: appender},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{
 		Read:     cfg.ReadTimeout,
