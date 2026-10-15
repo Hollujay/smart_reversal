@@ -353,15 +353,31 @@ paths:
       tags: [Governance]
       operationId: listAudit
       summary: Audit history with hash-chain verification field
-      description: Access to the audit trail is itself audited.
-      x-status: planned
-      x-phase: B1
+      description: |
+        What is returned depends on the caller's `view_audit` scope: `own` shows
+        only the caller's records, `all_ops` and `all` show the tenant's, and
+        `system` shows system and service actors. The `team` scope is not
+        available until the team model arrives with case management, and
+        returns 403. Reading the audit trail is itself recorded in it.
+
+        `verify=true` walks the whole chain and reports whether it is intact.
+        It needs the `all` scope.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
-        - { name: subject, in: query, schema: { type: string } }
+        - { name: subject_type, in: query, schema: { type: string } }
+        - { name: subject_id, in: query, schema: { type: string } }
+        - { name: actor_id, in: query, schema: { type: string, format: uuid } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: verify, in: query, schema: { type: boolean, default: false } }
       responses:
-        '200': { $ref: '#/components/responses/PlannedPage' }
+        '200':
+          description: Records in chain order, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -565,6 +581,48 @@ components:
           items: { type: string }
         mfa: { type: boolean }
         expires_at: { type: string, format: date-time }
+    AuditRecord:
+      type: object
+      required: [seq, id, occurred_at, actor_type, action, evidence_refs, sensitive_access, details, prev_hash, record_hash]
+      properties:
+        seq: { type: integer, format: int64 }
+        id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        actor_type: { type: string, enum: [user, service, system] }
+        actor_id: { type: string, format: uuid }
+        action: { type: string, example: reversal.approved }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        reason_code: { type: string }
+        evidence_refs:
+          type: array
+          items: { type: string }
+        before_hash: { type: string }
+        after_hash: { type: string }
+        policy_version: { type: string }
+        sensitive_access: { type: boolean }
+        details: { type: object, additionalProperties: true }
+        prev_hash: { type: string }
+        record_hash: { type: string }
+    AuditChain:
+      type: object
+      required: [verified, checked, head_seq]
+      properties:
+        verified: { type: boolean }
+        checked: { type: integer, format: int64 }
+        first_bad_seq: { type: integer, format: int64 }
+        reason: { type: string }
+        head_seq: { type: integer, format: int64 }
+        head_hash: { type: string }
+    AuditPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditRecord' }
+        next_cursor: { type: string }
+        chain: { $ref: '#/components/schemas/AuditChain' }
     PlannedBody:
       type: object
       description: Placeholder. The schema is defined when the owning phase starts.

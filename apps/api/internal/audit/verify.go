@@ -153,6 +153,8 @@ type Filter struct {
 	SubjectID   string
 	ActorID     uuid.UUID
 	Action      string
+	// SystemOnly limits the result to system and service actors.
+	SystemOnly bool
 }
 
 // List returns records in chain order, oldest first, after afterSeq.
@@ -168,8 +170,9 @@ func List(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, f Filter, afterSeq i
 		WHERE tenant_id = $1 AND chain_seq > $2
 		  AND ($3 = '' OR subject_type = $3) AND ($4 = '' OR subject_id = $4)
 		  AND ($5::uuid IS NULL OR actor_id = $5) AND ($6 = '' OR action = $6)
-		ORDER BY chain_seq LIMIT $7`,
-		tenant, afterSeq, f.SubjectType, f.SubjectID, nilIfZero(f.ActorID), f.Action, limit)
+		  AND (NOT $7 OR actor_type IN ('system', 'service'))
+		ORDER BY chain_seq LIMIT $8`,
+		tenant, afterSeq, f.SubjectType, f.SubjectID, nilIfZero(f.ActorID), f.Action, f.SystemOnly, limit)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list: %w", err)
 	}

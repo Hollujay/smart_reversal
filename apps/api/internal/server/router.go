@@ -26,6 +26,9 @@ type Options struct {
 	Verifier *identity.Verifier
 	// Auth handles POST /v1/auth/login. Nil leaves the route out entirely.
 	Auth *identity.Authenticator
+	// Services enables the routes that need a database, a permission policy and
+	// the audit trail. Nil leaves them out.
+	Services *Services
 }
 
 type authRoutes struct {
@@ -62,6 +65,9 @@ func NewRouter(o Options) http.Handler {
 		v1.Group(func(pr chi.Router) {
 			pr.Use(requireAuth(o.Verifier, identity.AudienceOps))
 			pr.Get("/me", me)
+			if o.Services.ready() {
+				pr.Get("/audit", o.Services.listAudit)
+			}
 		})
 	})
 	return r
