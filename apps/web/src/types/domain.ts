@@ -154,7 +154,36 @@ export interface FinancialException {
   customerPhone?: string;
   rrn?: string;
   stan?: string;
+  resolutionCode?: string;
 }
+
+export type TimelineSource =
+  | 'CBS'
+  | 'SWITCH'
+  | 'AI_ENGINE'
+  | 'CUSTOMER'
+  | 'OPS'
+  | 'NETWORK';
+
+export interface TimelineEvent {
+  id: string;
+  source: TimelineSource;
+  sourceName: string;
+  sourceTimestamp: string;
+  receivedTimestamp: string;
+  clockSkewMs: number;
+  isLateArriving: boolean;
+  lateArrivalReason?: string;
+  gapDurationMinutes?: number;
+  gapMessage?: string;
+  title: string;
+  description: string;
+  payload: Record<string, unknown>;
+  linkedEvidenceId?: string;
+  severity: 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS';
+}
+
+export type EvidenceFreshness = 'FRESH' | 'DEGRADED' | 'STALE';
 
 export interface EvidenceItem {
   id: string;
@@ -164,6 +193,118 @@ export interface EvidenceItem {
   timestamp?: string;
   details: string;
   verified: boolean;
+  freshness?: EvidenceFreshness;
+  freshnessLabel?: string;
+  isStale?: boolean;
+  canSupportAction?: boolean;
+  missingActionLabel?: string;
+  inferredBasis?: string;
+  confidence?: number;
+}
+
+export interface DuplicateFieldDiff {
+  field: string;
+  label: string;
+  isMatch: boolean;
+  originalVal: string;
+  suspectVal: string;
+}
+
+export interface DuplicateComparisonRecord {
+  isDuplicateSuspect: boolean;
+  riskGrade: 'LOW' | 'MEDIUM' | 'HIGH';
+  riskScore: number; // 0-100
+  reasons: string[];
+  intervalMs: number;
+  ruleOutcome: 'CONFIRMED_DUPLICATE' | 'SUSPECTED_DUPLICATE' | 'LEGITIMATE_RETRY';
+  verdictReason: string;
+  original: {
+    id: string;
+    reference: string;
+    stan: string;
+    rrn: string;
+    amount: string;
+    currency: string;
+    timestamp: string;
+    channel: Channel;
+    senderAccount: string;
+    beneficiaryAccount: string;
+    idempotencyKey: string;
+    terminalId: string;
+    deviceSession: string;
+    postingStatus: string;
+  };
+  suspect: {
+    id: string;
+    reference: string;
+    stan: string;
+    rrn: string;
+    amount: string;
+    currency: string;
+    timestamp: string;
+    channel: Channel;
+    senderAccount: string;
+    beneficiaryAccount: string;
+    idempotencyKey: string;
+    terminalId: string;
+    deviceSession: string;
+    postingStatus: string;
+  };
+  fieldDiffs: DuplicateFieldDiff[];
+}
+
+export interface CustomerReportedCaseDetails {
+  rawAlertMasked: string;
+  complaintText: string;
+  parsedFields: Array<{ field: string; value: string; confidence: number }>;
+  matchCandidates: Array<{
+    reference: string;
+    amount: string;
+    timestamp: string;
+    matchConfidence: number;
+  }>;
+  tamperFlags: Array<{ check: string; passed: boolean; note: string }>;
+  repeatContactCount: number;
+}
+
+export interface ExternalDependency {
+  id: string;
+  namedParty: string;
+  ticketReference: string;
+  expectedBy: string; // ISO
+  reason: string;
+  status: 'PENDING' | 'RESOLVED' | 'BREACHED';
+}
+
+export interface LedgerPosting {
+  id: string;
+  account: string;
+  accountName: string;
+  type: 'DEBIT' | 'CREDIT';
+  amount: string;
+  currency: string;
+  description: string;
+  timestamp: string;
+  isSettled: boolean;
+}
+
+export interface RelatedTransactionRecord {
+  id: string;
+  reference: string;
+  amount: string;
+  currency: string;
+  channel: Channel;
+  status: FinancialStatus;
+  relation: string;
+  timestamp: string;
+}
+
+export interface RelatedCaseRecord {
+  id: string;
+  caseNumber: string;
+  similarityScore: number; // 0-100%
+  title: string;
+  status: FinancialStatus;
 }
 
 export interface InvestigationCase {
@@ -176,7 +317,20 @@ export interface InvestigationCase {
   assignedAnalyst: string;
   createdAt: string;
   updatedAt: string;
+  exception: FinancialException;
   evidence: EvidenceItem[];
+  timeline: TimelineEvent[];
+  duplicateComparison?: DuplicateComparisonRecord;
+  customerDetails?: CustomerReportedCaseDetails;
+  externalDependencies: ExternalDependency[];
+  confirmedRootCause?: RootCause;
+  aiSuggestedRootCause: RootCause;
+  isRootCauseConfirmed: boolean;
+  ledgerPostings: LedgerPosting[];
+  relatedTransactions: RelatedTransactionRecord[];
+  relatedCases: RelatedCaseRecord[];
+  killSwitchActive: boolean;
+  degradedSourceBanner?: string;
   proposedAction?: string;
   aiSuggestedRemedy?: string;
   modelConfidence: number;
