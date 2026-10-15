@@ -41,22 +41,22 @@ services:
       retries: 5
 
   # ----------------------------------------------------------------------------
-  # Core Backend API (Go + Chi)
+  # Backend image (Go). One image, several commands: api, worker, migrate, mock.
   # ----------------------------------------------------------------------------
-  api:
+  migrate:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.api
-    container_name: smartreversal-api
-    restart: unless-stopped
+    image: smartreversal-backend:local
+    container_name: smartreversal-migrate
+    command: ["/app/migrate", "up"]
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
+    environment: &backend-env
       ENVIRONMENT: development
-      API_PORT: 8080
+      LOG_LEVEL: info
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-smartreversal_app}
@@ -66,10 +66,95 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET:-super_secret_dev_key_change_in_production_32char_minimum}
+      FINANCIAL_EXECUTION_ENABLED: "false"
+
+  api:
+    image: smartreversal-backend:local
+    container_name: smartreversal-api
+    command: ["/app/api"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+      API_PORT: 8080
     ports:
       - "${API_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: smartreversal-backend:local
+    container_name: smartreversal-worker
+    command: ["/app/worker"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+      WORKER_HEALTH_PORT: 8081
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # Simulated external systems (Track H). Health only until B5 and B7.
+  # ----------------------------------------------------------------------------
+  mock-status:
+    image: smartreversal-backend:local
+    container_name: smartreversal-mock-status
+    command: ["/app/mock"]
+    restart: unless-stopped
+    environment:
+      MOCK_KIND: status
+      MOCK_PORT: 9100
+    ports:
+      - "${MOCK_STATUS_PORT:-9101}:9100"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  mock-reversal:
+    image: smartreversal-backend:local
+    container_name: smartreversal-mock-reversal
+    command: ["/app/mock"]
+    restart: unless-stopped
+    environment:
+      MOCK_KIND: reversal
+      MOCK_PORT: 9100
+    ports:
+      - "${MOCK_REVERSAL_PORT:-9102}:9100"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  mock-notify:
+    image: smartreversal-backend:local
+    container_name: smartreversal-mock-notify
+    command: ["/app/mock"]
+    restart: unless-stopped
+    environment:
+      MOCK_KIND: notify
+      MOCK_PORT: 9100
+    ports:
+      - "${MOCK_NOTIFY_PORT:-9103}:9100"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9100/health"]
       interval: 15s
       timeout: 5s
       retries: 3
