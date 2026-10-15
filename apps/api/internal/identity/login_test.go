@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -237,4 +238,55 @@ func TestStoreNotFound(t *testing.T) {
 	if _, err := r.store.FindByEmail(context.Background(), r.tenant, "x@example.test"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("user: %v", err)
 	}
+}
+
+func TestBootstrapCreatesInstitutionAndOperatorThatCanLogIn(t *testing.T) {
+	r := newLoginRig(t)
+	ctx := context.Background()
+	code := "BOOT-" + strings.ToUpper(uuid.NewString()[:8])
+	t.Cleanup(func() {
+		_, _ = r.pool.Exec(context.Background(), `DELETE FROM users WHERE tenant_id IN (SELECT id FROM institutions WHERE code = $1)`, code)
+		_, _ = r.pool.Exec(context.Background(), `DELETE FROM institutions WHERE code = $1`, code)
+	})
+
+	tenant, user, err := Bootstrap(ctx, r.pool, BootstrapSpec{
+		InstitutionCode: code, Email: "first@example.test", Password: goodPassword, Roles: []string{"ADMIN"},
+	})
+	if err != nil || tenant == uuid.Nil || user == uuid.Nil {
+		t.Fatalf("bootstrap: %v %v %v", tenant, user, err)
+	}
+	res, err := r.auth.Login(ctx, code, "first@example.test", goodPassword)
+	if err != nil || !contains(res.Roles, "ADMIN") {
+		t.Fatalf("bootstrapped operator cannot log in: %v %+v", err, res)
+	}
+
+	// A second operator in the same institution reuses it.
+	tenant2, _, err := Bootstrap(ctx, r.pool, BootstrapSpec{
+		InstitutionCode: code, Email: "second@example.test", Password: goodPassword, Roles: []string{"AUDITOR"},
+	})
+	if err != nil || tenant2 != tenant {
+		t.Fatalf("second bootstrap: tenant %v (want %v) err %v", tenant2, tenant, err)
+	}
+	if _, _, err := Bootstrap(ctx, r.pool, BootstrapSpec{InstitutionCode: code, Email: "first@example.test", Password: goodPassword}); err == nil {
+		t.Error("duplicate email accepted")
+	}
+	for name, spec := range map[string]BootstrapSpec{
+		"no code":     {Email: "a@example.test", Password: goodPassword},
+		"no email":    {InstitutionCode: code, Password: goodPassword},
+		"no password": {InstitutionCode: code, Email: "a@example.test"},
+		"bad code":    {InstitutionCode: "lower case", Email: "a@example.test", Password: goodPassword},
+	} {
+		if _, _, err := Bootstrap(ctx, r.pool, spec); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
