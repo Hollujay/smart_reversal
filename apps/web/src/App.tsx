@@ -11,6 +11,7 @@ import { AuditView } from './features/AuditView';
 import { StorybookView } from './features/StorybookView';
 import { AgentIntakeView } from './features/AgentIntakeView';
 import { ReverseItView } from './features/reverseit/ReverseItView';
+import { RulesAndHealthView } from './features/RulesAndHealthView';
 
 const MainViewRouter: React.FC = () => {
   const { activeView } = useApp();
@@ -34,6 +35,8 @@ const MainViewRouter: React.FC = () => {
       return <ReversalsView />;
     case 'audit':
       return <AuditView />;
+    case 'rules-health':
+      return <RulesAndHealthView />;
     case 'storybook':
       return <StorybookView />;
     default:

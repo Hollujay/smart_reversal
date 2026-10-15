@@ -72,7 +72,7 @@ In accordance with CBN Instant Payment Standards, we will notify you immediately
       expect(sampleCase.modelConfidence).toBeGreaterThanOrEqual(0);
       expect(sampleCase.modelConfidence).toBeLessThanOrEqual(100);
       expect(sampleCase.aiSuggestedRemedy).toBeDefined();
-      expect(sampleCase.aiSuggestedRemedy.length).toBeGreaterThan(10);
+      expect(sampleCase.aiSuggestedRemedy!.length).toBeGreaterThan(10);
     });
   });
 });
