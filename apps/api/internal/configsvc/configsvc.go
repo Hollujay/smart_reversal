@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,18 +43,22 @@ type KeyDef struct {
 	Min, Max    int64
 	Unit        string
 	Description string
+	// Clock marks a key whose value is a regulatory clock definition (an object)
+	// instead of an integer.
+	Clock bool
 }
 
 // Keys is the registry of configuration keys. A value is stored only for a key
 // that matches one of these, and must be an integer in range. No defaults are
 // built in: the registry says what can be configured, never what the value is.
 var Keys = []KeyDef{
-	{regexp.MustCompile(`^duplicate\.window_seconds$`), 1, 3600, "seconds", "Window for flagging a potential duplicate debit"},
-	{regexp.MustCompile(`^status_query\.freshness_seconds$`), 1, 86400, "seconds", "How old a status answer may be and still count as fresh evidence"},
-	{regexp.MustCompile(`^waiting_threshold_seconds\.[A-Z0-9_]{2,30}$`), 0, 7 * 86400, "seconds", "How long to wait on a rail before a reversal may be considered"},
-	{regexp.MustCompile(`^approval\.auto_limit_minor$`), 0, 1 << 52, "minor units", "Largest amount that may be reversed without a human approval"},
-	{regexp.MustCompile(`^approval\.limit_minor\.[A-Z_]{3,40}$`), 0, 1 << 52, "minor units", "Largest amount a role may approve"},
-	{regexp.MustCompile(`^sla\.pause_max_hours$`), 0, 24 * 30, "hours", "Longest an SLA clock may stay paused without supervisor re-approval"},
+	{regexp.MustCompile(`^duplicate\.window_seconds$`), 1, 3600, "seconds", "Window for flagging a potential duplicate debit", false},
+	{regexp.MustCompile(`^status_query\.freshness_seconds$`), 1, 86400, "seconds", "How old a status answer may be and still count as fresh evidence", false},
+	{regexp.MustCompile(`^waiting_threshold_seconds\.[A-Z0-9_]{2,30}$`), 0, 7 * 86400, "seconds", "How long to wait on a rail before a reversal may be considered", false},
+	{regexp.MustCompile(`^approval\.auto_limit_minor$`), 0, 1 << 52, "minor units", "Largest amount that may be reversed without a human approval", false},
+	{regexp.MustCompile(`^approval\.limit_minor\.[A-Z_]{3,40}$`), 0, 1 << 52, "minor units", "Largest amount a role may approve", false},
+	{regexp.MustCompile(`^sla\.pause_max_hours$`), 0, 24 * 30, "hours", "Longest an SLA clock may stay paused without supervisor re-approval", false},
+	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
 
 // Lookup returns the definition for key.
@@ -80,9 +85,12 @@ type ProposeInput struct {
 
 // Version is one stored version of a key, with its decision if there is one.
 type Version struct {
-	Key             string
-	Version         int
-	Value           int64
+	Key     string
+	Version int
+	// Value is the integer value for integer keys, and zero for clock keys.
+	Value int64
+	// Raw is the stored value as JSON, for every key.
+	Raw             json.RawMessage
 	SourceReference string
 	EffectiveFrom   time.Time
 	VerifyStatus    string
@@ -108,6 +116,40 @@ func (s *Service) now() time.Time {
 		return s.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+// Clock is the value of a regulatory clock key. Its source, status and effective
+// date are the version's source_reference, verify_status and effective_from.
+type Clock struct {
+	Situation  string `json:"situation"`
+	Duration   int    `json:"duration"`
+	Unit       string `json:"unit"`
+	StartEvent string `json:"start_event"`
+	Calendar   string `json:"calendar"`
+	Owner      string `json:"owner"`
+}
+
+var clockUnits = map[string]bool{"minutes": true, "hours": true, "working_days": true}
+
+// parseClock validates a clock definition and returns it in canonical JSON.
+func parseClock(raw json.RawMessage) (json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var c Clock
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("%w: expected an object with situation, duration, unit, start_event, calendar and owner", ErrInvalidValue)
+	}
+	switch {
+	case strings.TrimSpace(c.Situation) == "" || len(c.Situation) > 200:
+		return nil, fmt.Errorf("%w: situation is required (up to 200 characters)", ErrInvalidValue)
+	case c.Duration < 1 || c.Duration > 365:
+		return nil, fmt.Errorf("%w: duration must be between 1 and 365", ErrInvalidValue)
+	case !clockUnits[c.Unit]:
+		return nil, fmt.Errorf("%w: unit must be minutes, hours or working_days", ErrInvalidValue)
+	case strings.TrimSpace(c.StartEvent) == "" || strings.TrimSpace(c.Calendar) == "" || strings.TrimSpace(c.Owner) == "":
+		return nil, fmt.Errorf("%w: start_event, calendar and owner are required", ErrInvalidValue)
+	}
+	return json.Marshal(c)
 }
 
 func parseValue(def KeyDef, raw json.RawMessage) (int64, error) {
@@ -138,9 +180,21 @@ func (s *Service) Propose(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UUI
 	if !ok {
 		return Version{}, ErrUnknownKey
 	}
-	value, err := parseValue(def, in.Value)
-	if err != nil {
-		return Version{}, err
+	var value int64
+	var canonical json.RawMessage
+	if def.Clock {
+		c, err := parseClock(in.Value)
+		if err != nil {
+			return Version{}, err
+		}
+		canonical = c
+	} else {
+		v, err := parseValue(def, in.Value)
+		if err != nil {
+			return Version{}, err
+		}
+		value = v
+		canonical, _ = json.Marshal(v)
 	}
 	now := s.now()
 	switch {
@@ -165,8 +219,7 @@ func (s *Service) Propose(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UUI
 		tenant, in.Key).Scan(&next); err != nil {
 		return Version{}, fmt.Errorf("configsvc: next version: %w", err)
 	}
-	canonical, _ := json.Marshal(value)
-	_, err = tx.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		INSERT INTO config_versions (tenant_id, key, version, value, source_reference, effective_from, verify_status, proposed_by, reason, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		tenant, in.Key, next, canonical, strings.TrimSpace(in.SourceReference), in.EffectiveFrom.UTC(), in.VerifyStatus, maker, strings.TrimSpace(in.Reason), now)
@@ -181,12 +234,12 @@ func (s *Service) Propose(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UUI
 	if _, err := s.Audit.Append(ctx, tx, tenant, audit.Event{
 		Actor: audit.ActorUser, ActorID: maker, Action: "config.proposed",
 		SubjectType: "config", SubjectID: fmt.Sprintf("%s@%d", in.Key, next),
-		Details: map[string]any{"key": in.Key, "version": next, "value": value, "verify_status": in.VerifyStatus,
+		Details: map[string]any{"key": in.Key, "version": next, "value": json.RawMessage(canonical), "verify_status": in.VerifyStatus,
 			"source_reference": strings.TrimSpace(in.SourceReference), "effective_from": in.EffectiveFrom.UTC().Format(time.RFC3339)},
 	}); err != nil {
 		return Version{}, err
 	}
-	return Version{Key: in.Key, Version: next, Value: value, SourceReference: strings.TrimSpace(in.SourceReference),
+	return Version{Key: in.Key, Version: next, Value: value, Raw: canonical, SourceReference: strings.TrimSpace(in.SourceReference),
 		EffectiveFrom: in.EffectiveFrom.UTC(), VerifyStatus: in.VerifyStatus, ProposedBy: maker,
 		Reason: strings.TrimSpace(in.Reason), CreatedAt: now}, nil
 }
@@ -246,7 +299,7 @@ func (s *Service) Decide(ctx context.Context, tx pgx.Tx, tenant, checker uuid.UU
 }
 
 const selectVersion = `
-	SELECT v.key, v.version, (v.value #>> '{}')::bigint, v.source_reference, v.effective_from, v.verify_status,
+	SELECT v.key, v.version, v.value::text, v.source_reference, v.effective_from, v.verify_status,
 	       v.proposed_by, v.reason, v.created_at,
 	       coalesce(d.decision, ''), d.decided_by, d.decided_at, coalesce(d.reason, '')
 	FROM config_versions v
@@ -255,12 +308,17 @@ const selectVersion = `
 func scanVersion(row pgx.Row) (Version, error) {
 	var v Version
 	var decidedBy *uuid.UUID
-	if err := row.Scan(&v.Key, &v.Version, &v.Value, &v.SourceReference, &v.EffectiveFrom, &v.VerifyStatus,
+	var raw string
+	if err := row.Scan(&v.Key, &v.Version, &raw, &v.SourceReference, &v.EffectiveFrom, &v.VerifyStatus,
 		&v.ProposedBy, &v.Reason, &v.CreatedAt, &v.Decision, &decidedBy, &v.DecidedAt, &v.DecisionReason); err != nil {
 		return Version{}, err
 	}
 	if decidedBy != nil {
 		v.DecidedBy = *decidedBy
+	}
+	v.Raw = json.RawMessage(raw)
+	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		v.Value = n
 	}
 	v.EffectiveFrom, v.CreatedAt = v.EffectiveFrom.UTC(), v.CreatedAt.UTC()
 	return v, nil
@@ -322,7 +380,7 @@ func (s *Service) Rollback(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UU
 	if old.Decision != "approved" {
 		return Version{}, fmt.Errorf("%w: version %d was never approved", ErrInvalidInput, toVersion)
 	}
-	raw, _ := json.Marshal(old.Value)
+	raw := old.Raw
 	return s.Propose(ctx, tx, tenant, maker, ProposeInput{
 		Key: key, Value: raw, SourceReference: fmt.Sprintf("rollback to version %d (%s)", toVersion, old.SourceReference),
 		EffectiveFrom: effectiveFrom, VerifyStatus: old.VerifyStatus, Reason: reason,

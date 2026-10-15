@@ -17,24 +17,24 @@ import (
 )
 
 type configVersionJSON struct {
-	Key             string     `json:"key"`
-	Version         int        `json:"version"`
-	Value           int64      `json:"value"`
-	SourceReference string     `json:"source_reference"`
-	VerifyStatus    string     `json:"verify_status"`
-	EffectiveFrom   time.Time  `json:"effective_from"`
-	ProposedBy      string     `json:"proposed_by"`
-	Reason          string     `json:"reason"`
-	CreatedAt       time.Time  `json:"created_at"`
-	Decision        string     `json:"decision"`
-	DecidedBy       string     `json:"decided_by,omitempty"`
-	DecidedAt       *time.Time `json:"decided_at,omitempty"`
-	DecisionReason  string     `json:"decision_reason,omitempty"`
+	Key             string          `json:"key"`
+	Version         int             `json:"version"`
+	Value           json.RawMessage `json:"value"`
+	SourceReference string          `json:"source_reference"`
+	VerifyStatus    string          `json:"verify_status"`
+	EffectiveFrom   time.Time       `json:"effective_from"`
+	ProposedBy      string          `json:"proposed_by"`
+	Reason          string          `json:"reason"`
+	CreatedAt       time.Time       `json:"created_at"`
+	Decision        string          `json:"decision"`
+	DecidedBy       string          `json:"decided_by,omitempty"`
+	DecidedAt       *time.Time      `json:"decided_at,omitempty"`
+	DecisionReason  string          `json:"decision_reason,omitempty"`
 }
 
 func versionJSON(v configsvc.Version) configVersionJSON {
 	out := configVersionJSON{
-		Key: v.Key, Version: v.Version, Value: v.Value, SourceReference: v.SourceReference, VerifyStatus: v.VerifyStatus,
+		Key: v.Key, Version: v.Version, Value: v.Raw, SourceReference: v.SourceReference, VerifyStatus: v.VerifyStatus,
 		EffectiveFrom: v.EffectiveFrom, ProposedBy: v.ProposedBy.String(), Reason: v.Reason, CreatedAt: v.CreatedAt,
 		Decision: v.Decision, DecidedAt: v.DecidedAt, DecisionReason: v.DecisionReason,
 	}

@@ -94,7 +94,7 @@ func TestSupervisorProposesRiskApprovesAndTheValueTakesEffect(t *testing.T) {
 	}
 
 	v := decodeVersion(t, r.do(http.MethodPost, path+"/proposals", sup, proposalBody(30, time.Now())), http.StatusCreated)
-	if v.Version != 1 || v.Decision != "pending" || v.Value != 30 || v.VerifyStatus != "unverified" {
+	if v.Version != 1 || v.Decision != "pending" || string(v.Value) != "30" || v.VerifyStatus != "unverified" {
 		t.Fatalf("proposal: %+v", v)
 	}
 	if rec := r.do(http.MethodGet, path, risk, ""); rec.Code != http.StatusNotFound {
@@ -106,7 +106,7 @@ func TestSupervisorProposesRiskApprovesAndTheValueTakesEffect(t *testing.T) {
 		t.Fatalf("decision: %+v", d)
 	}
 	got := decodeVersion(t, r.do(http.MethodGet, path, sup, ""), http.StatusOK)
-	if got.Value != 30 || got.Decision != "approved" || got.SourceReference != "Scope FR-04" {
+	if string(got.Value) != "30" || got.Decision != "approved" || got.SourceReference != "Scope FR-04" {
 		t.Fatalf("effective: %+v", got)
 	}
 

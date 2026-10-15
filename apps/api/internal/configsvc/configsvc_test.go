@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -460,6 +461,126 @@ func TestRegistryPatterns(t *testing.T) {
 	for _, k := range []string{"", "duplicate.window_seconds.extra", "approval.limit_minor.lower", "approval.limit_minor.", "../etc/passwd", "DUPLICATE.WINDOW_SECONDS"} {
 		if _, ok := Lookup(k); ok {
 			t.Errorf("%q matched the registry", k)
+		}
+	}
+}
+
+// ---- regulatory clocks ------------------------------------------------------
+
+func TestSeededClocksArePendingUntilSomeoneElseApproves(t *testing.T) {
+	r := newRig(t)
+	var vs []Version
+	if err := r.tx(t, func(tx pgx.Tx) error {
+		var err error
+		vs, err = r.svc.SeedClockProposals(context.Background(), tx, r.tenant, r.maker, r.now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != len(SeedClocks) || len(vs) != 7 {
+		t.Fatalf("seeded %d clocks", len(vs))
+	}
+	for _, v := range vs {
+		if v.Decision != "" {
+			t.Errorf("%s was decided at seeding", v.Key)
+		}
+		if _, err := r.effective(t, v.Key, r.now.Add(time.Hour)); !errors.Is(err, ErrNotConfigured) {
+			t.Errorf("%s is in force before any approval: %v", v.Key, err)
+		}
+	}
+
+	// The status the pack gave each clock is kept, and the conflicting one is not hidden.
+	byKey := map[string]Version{}
+	for _, v := range vs {
+		byKey[v.Key] = v
+	}
+	if v := byKey[ClockKey("POS_WEB_DISPUTE")]; v.VerifyStatus != "conflicting" || !strings.Contains(string(v.Raw), `"duration":72`) {
+		t.Errorf("POS clock: %+v", v)
+	}
+	if v := byKey[ClockKey("ATM_ON_US_MANUAL_REFUND")]; v.VerifyStatus != "draft" {
+		t.Errorf("ATM on-us clock: %+v", v)
+	}
+	for _, v := range vs {
+		if v.VerifyStatus == "confirmed" {
+			t.Errorf("%s claims to be confirmed: press reports have not been verified", v.Key)
+		}
+		if !strings.Contains(v.SourceReference, "section 5.3") {
+			t.Errorf("%s lacks a source: %q", v.Key, v.SourceReference)
+		}
+	}
+
+	// A person other than the seeder can approve one, and it then reads back.
+	if err := r.decide(t, ClockKey("ATM_NOT_ON_US"), 1, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.effective(t, ClockKey("ATM_NOT_ON_US"), r.now.Add(time.Hour))
+	var c Clock
+	if err != nil || json.Unmarshal(got.Raw, &c) != nil || c.Duration != 48 || c.Unit != "hours" || got.VerifyStatus != "reported" {
+		t.Fatalf("approved clock: %+v %+v %v", got, c, err)
+	}
+	// The seeder cannot approve their own seeding.
+	err = r.tx(t, func(tx pgx.Tx) error {
+		_, err := r.svc.Decide(context.Background(), tx, r.tenant, r.maker, ClockKey("POS_WEB_DISPUTE"), 1, true, "")
+		return err
+	})
+	if !errors.Is(err, ErrSelfApproval) {
+		t.Errorf("seeder approving: %v", err)
+	}
+}
+
+func TestClockValuesAreValidated(t *testing.T) {
+	r := newRig(t)
+	propose := func(raw string) error {
+		return r.tx(t, func(tx pgx.Tx) error {
+			_, err := r.svc.Propose(context.Background(), tx, r.tenant, r.maker, ProposeInput{
+				Key: ClockKey("TEST_CLOCK"), Value: json.RawMessage(raw), SourceReference: "src", EffectiveFrom: r.now,
+				VerifyStatus: "draft", Reason: "a sufficient reason"})
+			return err
+		})
+	}
+	good := `{"situation":"s","duration":2,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o"}`
+	if err := propose(good); err != nil {
+		t.Fatalf("good clock rejected: %v", err)
+	}
+	for name, raw := range map[string]string{
+		"an integer":     `30`,
+		"not an object":  `"24 hours"`,
+		"unknown field":  `{"situation":"s","duration":2,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o","x":1}`,
+		"no situation":   `{"situation":" ","duration":2,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o"}`,
+		"zero duration":  `{"situation":"s","duration":0,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o"}`,
+		"huge duration":  `{"situation":"s","duration":366,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o"}`,
+		"bad unit":       `{"situation":"s","duration":2,"unit":"weeks","start_event":"e","calendar":"WAT","owner":"o"}`,
+		"no start event": `{"situation":"s","duration":2,"unit":"hours","start_event":"","calendar":"WAT","owner":"o"}`,
+		"no calendar":    `{"situation":"s","duration":2,"unit":"hours","start_event":"e","owner":"o"}`,
+		"no owner":       `{"situation":"s","duration":2,"unit":"hours","start_event":"e","calendar":"WAT"}`,
+		"fractional":     `{"situation":"s","duration":1.5,"unit":"hours","start_event":"e","calendar":"WAT","owner":"o"}`,
+	} {
+		if err := propose(raw); !errors.Is(err, ErrInvalidValue) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A clock id outside the pattern is not a key at all.
+	if _, ok := Lookup("regulatory_clock.lower"); ok {
+		t.Error("lower-case clock id accepted")
+	}
+}
+
+func TestEveryRegulatoryClockSeedIsAValidClock(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range SeedClocks {
+		if seen[c.ID] {
+			t.Errorf("duplicate seed id %s", c.ID)
+		}
+		seen[c.ID] = true
+		raw, _ := json.Marshal(c.Clock)
+		if _, err := parseClock(raw); err != nil {
+			t.Errorf("%s: %v", c.ID, err)
+		}
+		if _, ok := Lookup(ClockKey(c.ID)); !ok {
+			t.Errorf("%s does not match the registry", c.ID)
+		}
+		if c.Source == "" || c.Note == "" {
+			t.Errorf("%s lacks a source or note", c.ID)
 		}
 	}
 }
