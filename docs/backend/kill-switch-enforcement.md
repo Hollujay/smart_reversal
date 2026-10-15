@@ -52,7 +52,7 @@ Parking an approved reversal (rather than ending it, as the earlier test `TestAF
 ## Limits found while building this
 
 - **Policy scope and reversals.** A reversal submission is governed by the policy `reversal.<exception code>.<rail>` (for example `reversal.FAIL001.NIP`), and a `policy` freeze naming it stops requests, automatic sweeps and parked submissions for that code on that rail. If the identity cannot be determined, every policy freeze covers the action. A detector rule id such as `DET-FAIL-1` is a different policy and does not stop reversals.
-- **Approvals do not expire.** A parked reversal keeps its approval for as long as the freeze lasts. The gate is evaluated again at submission, so stale evidence still stops it, but an approval given weeks earlier would still be honoured. Approval expiry is a separate B5 gap.
+- **Approvals expire.** A parked reversal keeps its approval only for the configured validity period. A lapse (or a change to the policy the approval relied on) is recorded even while frozen, the reversal becomes EXPIRED, and it needs a fresh approval. See `approval-expiry.md`.
 - **Resumed cases are dated from the original detection.** The SLA clock therefore counts the time spent frozen. That is deliberate (the customer's clock does not pause because of our incident) and the case says so, but Compliance should confirm it.
 - **Held detection has no age limit or alert.** Open deferrals are counted in `GET /v1/killswitch`, but nothing raises an alert if they stay open for a long time. That belongs to B7.
 - **Deferral covers detection only.** Other future automation (notification delivery with real providers, reconciliation imports) will need the same check at its own action when it exists.
