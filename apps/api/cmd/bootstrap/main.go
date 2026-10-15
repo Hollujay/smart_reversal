@@ -38,6 +38,7 @@ func run() error {
 	name := flag.String("name", "", "operator display name (default: the email)")
 	seedClocks := flag.Bool("seed-clocks", false, "propose the v2 candidate regulatory clocks as this operator; they stay pending until someone else approves them")
 	roles := flag.String("roles", "", "comma-separated roles, for example ADMIN_INTEGRATION or REVERSAL_OFFICER,SUPERVISOR")
+	enrolTOTP := flag.Bool("enrol-totp", false, "enrol a development authenticator for this operator and print its synthetic secret (D20)")
 	flag.Parse()
 
 	password := os.Getenv("BOOTSTRAP_PASSWORD")
@@ -72,6 +73,16 @@ func run() error {
 		return err
 	}
 	fmt.Printf("institution %s (%s)\noperator %s\n", *code, tenant, user)
+	if *enrolTOTP {
+		secret, err := identity.NewTOTPSecret()
+		if err != nil {
+			return err
+		}
+		if err := (&identity.PGUserStore{Pool: pool}).EnrollTOTP(ctx, tenant, user, secret); err != nil {
+			return err
+		}
+		fmt.Printf("DEVELOPMENT AUTHENTICATOR (synthetic, not a bank credential)\n%s\n", identity.OTPAuthURI(*code, *email, secret))
+	}
 
 	if *seedClocks {
 		svc := &configsvc.Service{Audit: &audit.Appender{}}

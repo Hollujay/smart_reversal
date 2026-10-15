@@ -49,6 +49,9 @@ type loginRequest struct {
 	Institution string `json:"institution"`
 	Email       string `json:"email"`
 	Password    string `json:"password"`
+	// OTP is the six-digit code from the development authenticator. Only a
+	// login with a valid code yields a token that can approve.
+	OTP string `json:"otp,omitempty"`
 }
 
 type loginResponse struct {
@@ -57,6 +60,7 @@ type loginResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	UserID      string    `json:"user_id"`
 	Roles       []string  `json:"roles"`
+	MFA         bool      `json:"mfa"`
 }
 
 // login exchanges credentials for an operator token.
@@ -71,7 +75,7 @@ func (s *authRoutes) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.auth.Login(r.Context(), req.Institution, req.Email, req.Password)
+	res, err := s.auth.LoginOTP(r.Context(), req.Institution, req.Email, req.Password, req.OTP)
 	switch {
 	case errors.Is(err, identity.ErrInvalidCredentials):
 		w.Header().Set("Cache-Control", "no-store")
@@ -90,6 +94,7 @@ func (s *authRoutes) login(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:   res.ExpiresAt,
 		UserID:      res.UserID.String(),
 		Roles:       res.Roles,
+		MFA:         res.MFA,
 	})
 }
 

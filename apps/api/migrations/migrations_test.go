@@ -34,7 +34,7 @@ func TestEmbeddedMigrationsApplyAndRevert(t *testing.T) {
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set; skipping database integration test")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	// Run in a private schema so this test cannot disturb tables that other

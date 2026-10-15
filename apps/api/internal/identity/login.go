@@ -75,6 +75,7 @@ type LoginResult struct {
 	UserID    uuid.UUID
 	TenantID  uuid.UUID
 	Roles     []string
+	MFA       bool
 }
 
 func (a *Authenticator) now() time.Time {
@@ -84,10 +85,18 @@ func (a *Authenticator) now() time.Time {
 	return time.Now()
 }
 
-// Login verifies the credentials and returns a token. MFA is not issued here,
-// so tokens from this path carry mfa=false and cannot perform actions that
-// require it.
+// Login verifies the credentials and returns a token with mfa=false. Such a
+// token cannot perform actions that require MFA.
 func (a *Authenticator) Login(ctx context.Context, institutionCode, email, password string) (*LoginResult, error) {
+	return a.LoginOTP(ctx, institutionCode, email, password, "")
+}
+
+// LoginOTP is Login with an optional one-time code. A token carries mfa=true
+// only when the user has an enrolled authenticator and the code is valid and
+// unused. A wrong or replayed code fails the login and counts as a failed
+// attempt, like a wrong password. Supplying a code for a user without an
+// authenticator also fails; it never falls back to a token without MFA.
+func (a *Authenticator) LoginOTP(ctx context.Context, institutionCode, email, password, otp string) (*LoginResult, error) {
 	maxAttempts, lockFor := a.MaxAttempts, a.LockFor
 	if maxAttempts <= 0 {
 		maxAttempts = defaultMaxAttempts
@@ -139,6 +148,22 @@ func (a *Authenticator) Login(ctx context.Context, institutionCode, email, passw
 		return nil, ErrInvalidCredentials
 	}
 
+	mfa := false
+	if otp != "" {
+		ok, err := a.checkOTP(ctx, tenant, u.ID, otp, now)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			if err := a.Store.RecordFailure(ctx, tenant, u.ID, now, maxAttempts, lockFor); err != nil {
+				return nil, err
+			}
+			a.note(ctx, LoginEvent{TenantID: tenant, UserID: u.ID, EmailDigest: digest, Outcome: LoginWrongPassword})
+			return nil, ErrInvalidCredentials
+		}
+		mfa = true
+	}
+
 	newHash := ""
 	if rehash {
 		if h, err := HashPassword(password); err == nil {
@@ -154,11 +179,31 @@ func (a *Authenticator) Login(ctx context.Context, institutionCode, email, passw
 			return nil, fmt.Errorf("identity: login not recorded: %w", err)
 		}
 	}
-	tok, exp, err := a.Signer.Issue(Principal{UserID: u.ID, TenantID: tenant, Roles: u.Roles}, AudienceOps, now)
+	tok, exp, err := a.Signer.Issue(Principal{UserID: u.ID, TenantID: tenant, Roles: u.Roles, MFA: mfa}, AudienceOps, now)
 	if err != nil {
 		return nil, err
 	}
-	return &LoginResult{Token: tok, ExpiresAt: exp, UserID: u.ID, TenantID: tenant, Roles: u.Roles}, nil
+	return &LoginResult{Token: tok, ExpiresAt: exp, UserID: u.ID, TenantID: tenant, Roles: u.Roles, MFA: mfa}, nil
+}
+
+// checkOTP reports whether otp is a valid, unused code for the user.
+func (a *Authenticator) checkOTP(ctx context.Context, tenant, user uuid.UUID, otp string, now time.Time) (bool, error) {
+	ts, ok := a.Store.(TOTPStore)
+	if !ok {
+		return false, nil
+	}
+	secret, err := ts.TOTPSecret(ctx, tenant, user)
+	if errors.Is(err, ErrNoTOTP) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	step, match := MatchTOTP(secret, otp, now)
+	if !match {
+		return false, nil
+	}
+	return ts.ConsumeTOTPStep(ctx, tenant, user, step)
 }
 
 // note reports a failed attempt. A failure to record it must not turn into a
