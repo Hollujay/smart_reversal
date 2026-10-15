@@ -1,64 +1,137 @@
-# Backend Requirement Traceability Matrix (B0)
+# Backend Requirement Traceability Matrix
 
-Status: draft. Source: the backend master brief only. The four playbook documents are not in the repository, so the "Playbook ref" column is left for the team to fill in. Do not treat this matrix as reconciled until that is done.
+Last updated: 2026-10-15. Reconciled against the four playbooks supplied by the project owner:
 
-Repo state key: `none` nothing exists, `stub` empty or in-memory placeholder, `partial` usable base needing rework.
+1. Full Project Scope ("Scope", sections numbered as in that document)
+2. v2 Integrated Scope Prompt Pack ("v2")
+3. Vol 2 Phase-by-Phase Production Playbook ("Vol2")
+4. Complete Playbook Vol 1 + Vol 2 ("Complete"). Its text overlaps v2 and Vol2 for the backend, and no backend requirement was found that exists only in it. A line-by-line check of its non-backend content (frontend, AI, pilot, deployment) was not done and is not claimed.
 
-| ID | Requirement | Phase | Repo state | Notes |
-|---|---|---|---|---|
-| R01 | Modular monolith, separate worker, isolated reversal boundary | B0 | none | Needs D1 and D2 |
-| R02 | ADRs for major decisions | B0 | stub | ADR 0001 is one line |
-| R03 | Docker Compose, DB connection, migrations | B0 | partial | Compose exists, migrations empty |
-| R04 | OpenAPI under `/v1` | B0 | partial | 9 unprefixed paths |
-| R05 | CI foundation | B0 | partial | Go job fails on missing go.sum |
-| R06 | Risk and assumption register | B0 | none | See `risk-assumption-register.md` |
-| R10 | Tenant-aware models, tenant isolation tests | B1 | none | No tenant concept anywhere |
-| R11 | JWT verification, RBAC, ABAC, privileged actions | B1 | stub | Dev login must go |
-| R12 | Service-to-service auth | B1 | none | |
-| R13 | Masking and tokenisation | B1 | none | |
-| R14 | Append-only hash-chained audit | B1 | stub | In memory |
-| R15 | Versioned config, business calendar, deadlines | B1 | none | |
-| R20 | Canonical event schema, validation, normalisation | B2 | partial | Channel set incomplete |
-| R21 | Channel adapters (NIP, POS, ATM, card, mobile, internet, USSD) | B2 | none | |
-| R22 | Redis Streams, dedup, retry, dead letter, replay | B2 | none | |
-| R23 | Deterministic synthetic simulator | B2 | none | Fixtures exist in `tests/fixtures` |
-| R30 | Detectors: duplicate debit, no beneficiary credit, failed with funds withheld, POS timeout, unknown status, reversal failure, settlement discrepancy | B3 | stub | `exceptions.go` classifier to review |
-| R31 | Codes DUP001, FAIL001, UNK001, REV001, STL001, CUS001 plus codes in v2 scope | B3 | none | Extra codes unknown until source docs are read |
-| R32 | Configurable thresholds, risk grade, evidence refs, rule versions | B3 | none | |
-| R40 | Exception queue, cases, assignment, transitions, priority, root cause | B4 | stub | `investigations` empty |
-| R41 | SLA deadlines, escalation, complaint link, audit | B4 | none | |
-| R50 | Status-query-first workflow | B5 | none | |
-| R51 | Eight-check eligibility gate | B5 | none | See safety rules below |
-| R52 | Maker-checker with amount and policy limits | B5 | stub | Protocol doc exists, no code |
-| R53 | Remediation lock, idempotency keys, duplicate prevention | B5 | none | |
-| R54 | Mock reversal provider, post-reversal verification, retry | B5 | none | |
-| R55 | Kill switch, execution disabled by default | B5 | none | |
-| R60 | Settlement ingestion, NIBSS adapter contract, reconciliation, reports | B6 | stub | Sample CSV fixture exists |
-| R70 | Incidents, alerts, notification orchestration, providers, templates | B7 | none | |
-| R71 | Two-stage customer notification, no refund claim before verification | B7 | none | |
-| R80 | Read-only reporting APIs, synthetic vs verified metrics separation | B8 | none | |
-| R81 | Metrics, structured logs, trace IDs | B8 | partial | `observability/logger.go` |
-| R90 | Hardening, rate limits, upload safety, scanning, restore docs | B9 | none | |
-| R100 | ReverseIt customer APIs, ownership enforcement, parser interface with fallback | B10 | none | |
-| R110 | Scheduled jobs, scenario seeding, reset, simulated time, replay | B11 | none | |
-| R120 | AI interfaces: anomaly, classification, root cause, parser, complaint wording, summary, feedback | cross | partial | AI service has two routers |
-| R121 | AI output validated, advisory, never authorises money movement, safe fallback | cross | none | |
+State key: `none` nothing in the repo, `stub` placeholder or in-memory, `partial` usable base. "Track H" means required for the hackathon demo.
 
-## Financial safety rules carried into every phase
+## 1. Functional requirements (Scope 13.1, tightened by v2 section 5.4)
 
-These are non-negotiable and each needs a named test before the phase that owns it can close.
+| FR | Requirement | Phase | Repo state |
+|---|---|---|---|
+| FR-01 to FR-03 | Ingest all sources into one normalised stream, support NIP, POS, ATM, card, mobile, internet, USSD, gateway, merchant, NIBSS and settlement files, quarantine malformed events | B2 | stub (`transactions`) |
+| FR-04 to FR-06 | Duplicate detection with references and session, risk grade Low/Medium/High, 30 s default window, configurable | B3 | none |
+| FR-07 to FR-09 | Debit without credit, debit with settlement incomplete, NIP failed with funds withheld, POS timeout with debit (plus ATM, vendor, fee cases) | B3 | none |
+| FR-10 | Unknown status detected, status query triggered, never treated as failed | B3, B5 | none |
+| FR-11 | Settlement file versus core banking mismatch | B3, B6 | none |
+| FR-12 | ML score on flagged transactions | AI track (A5) | AI stub. Backend owns the adapter only |
+| FR-13 to FR-16 | Auto-create case, codes, root cause on every case, priority | B4, B3 | stub (`exceptions`) |
+| FR-17 | SLA deadline from regulatory clock, regulatory deadline and internal target shown separately | B4, B10 | none |
+| FR-18 to FR-23 | 8-check gate, status query first, auto-reverse only on confirmed failure, approval routing, idempotency, REV001 on failure | B5 | none |
+| FR-24, FR-25 | Customer and ops notifications, deduplicated, two-stage | B7 | none |
+| FR-26 to FR-34 | ReverseIt intake, parse, match, classify, countdown, complaint, status timeline, escalation ladder, labelled examples | B10 (parse is AI A9) | none |
+| FR-35, FR-36 | Operations and executive dashboard data | B8 | none |
+| FR-37 | Decision log with actor, before, after, time, hash-chained | B1 | stub (in memory) |
+| FR-38 | Scheduled bots never bypass the gate | B11 | none |
+| FR-39 | Rules, thresholds, windows, limits and clocks editable without code, versioned, audited | B1, B3 | none |
+| FR-40 | RBAC for operations, management, compliance, customers, plus supervisor, agent, admin | B1 | stub, unsafe |
+| FR-41 to FR-58 | Added by v2 section 5.5: customer auth and rate limits (41), alert authenticity (42), wrong-account path (43), duplicate posting vs transfer (44), notification tracking and opt-out (45), inward credit delay EX-DLY (46), business calendar WAT (47), internal target earlier than deadline (48), demo controls (49), label store with ops confirmation (50), link repeat reports (51), reopen on disputed outcome (52), OpenAPI per interface with contract tests (53), mask before external AI call (54), mobile-first flow (55, frontend), consent and retention (56), agent view (57, frontend), mocked status and reversal services with scripted outcomes (58) | B0 to B11 as in v2 | none |
 
-- S1 Five outcome classes. A timeout never means failed.
-- S2 Eight reversal checks. Any failure blocks automatic reversal.
-- S3 Three separate states: request accepted, processing, verified outcome.
-- S4 Maker and checker must differ. Admin does not bypass this.
-- S5 Evidence is immutable.
-- S6 Retries and duplicate submits cause no second financial effect.
-- S7 Execution is off by default and has a kill switch.
-- S8 AI output cannot bypass rules, policy or approvals.
-- S9 All execution in this project is simulated and labelled as such.
+## 2. B0 deliverables from v2 (prompt B0)
 
-## Open items
+| Item | Source | Planned in B0 | Notes |
+|---|---|---|---|
+| ADRs listing rejected alternatives | B0 | Yes, ADR 0002 | Accepted for D1, D2 |
+| Service decomposition and modular monolith recommendation | B0 | Yes, `module-layout.md` | |
+| C4 context and container diagrams in Mermaid | B0 | Yes | Not in the earlier plan |
+| Data store definitions: operational, append-only event, audit (hash-chained), analytical later | B0 | ADR and layout doc | Schemas arrive in B1, B2 |
+| Multi-tenant strategy: `tenant_id` plus row-level security | B0 | Decision only | Implementation is B1 (D7) |
+| Repo layout, coding standards, CI with lint, unit, integration, contract, SAST, dependency scan, secret scan | B0 | Yes, staged | Scans added where tooling is available |
+| Makefile and dev compose with api, simulator, detector worker, scheduler, mock-status, mock-reversal, mock-notify, postgres, redis, frontend | B0 | Compose carries only services that exist. Mock services start as health-only stubs and are labelled so | Behaviour arrives in B2, B5, B7 |
+| OpenAPI v0.1 and one OpenAPI file per scope 13.3 interface, with contract tests | B0, FR-53 | Yes | Six interfaces: transaction feed, status query, reversal API, settlement and NIBSS files, SMS and email gateway, customer app and ALAT |
+| ADR items for mentors: status-query-first, approval thresholds, "within regulatory limits" | B0 | Listed as D19 | Cannot be decided without Wema |
+| Risk list | B0 | `risk-assumption-register.md` | |
 
-- Reconcile every row with the playbook documents and fill in section references.
-- Obtain the full list of v2 classification codes beyond the six named.
+Vol2 phase 3 exit gate also names threat model, DPIA draft, IaC, observability, and tests for tenancy, auth, RBAC, audit and config. Of these, B0 contributes the skeleton and observability foundation. Tenancy, auth, RBAC, audit and config tests belong to B1. The threat model exists in `docs/security/threat-model.md`. The DPIA and IaC are programme deliverables outside the backend brief.
+
+## 3. Exception taxonomy and codes
+
+Scope codes (confirmed in the Scope document): DUP001, FAIL001, UNK001, REV001, STL001, CUS001.
+
+v2 section 5.6 proposes more. They are "proposed" in v2 and are not confirmed by the bank:
+
+| Proposed code | Meaning | Taxonomy type |
+|---|---|---|
+| DUP002 | Duplicate transfer, two credits, recall path | EX-DUP |
+| FAIL002 | ATM no or partial dispense | EX-ATM |
+| FAIL003 | Vendor value not delivered | EX-VND |
+| FAIL004 | Fee on failed transaction | EX-FEE |
+| UNK002 | Late success after reversal | EX-LTE |
+| CUS002 | Wrong account or amount, customer error path | EX-CUS |
+| DLY001 | Inward credit delay | EX-DLY |
+
+Taxonomy types in v2 section 6.1: EX-DUP, EX-DNC, EX-INC, EX-STK, EX-STL, EX-MIS, EX-RVF, EX-RVP, EX-RTY, EX-INC2 (incident), EX-ATM, EX-VND, EX-FEE, EX-LTE, EX-CUS. EX-DLY appears in v2 section 5.3 and 5.6.
+
+Implementation rule: store the code list as configuration so proposed codes can be confirmed or dropped without a code change.
+
+## 4. State machines and contracts defined by the playbooks
+
+| Item | Source | Phase |
+|---|---|---|
+| Case states: Detected, Awaiting Evidence, Under Investigation, Awaiting Approval, Remediation Submitted, Outcome Verification, Resolved, Closed. Side states: Rejected Action, Remediation Failed, External Dependency, Suppressed, Closed No Exception, Closed Customer Error, Reopened | v2 6.2 | B4 |
+| Transaction lifecycle: INITIATED, DEBITED, SENT, PENDING, CONFIRMED_SUCCESS, CONFIRMED_FAILURE, UNKNOWN, REVERSAL_* | v2 B2 | B2 |
+| Reversal tracks: accepted, processing, financial outcome verified, tracked as separate fields | v2 6.3, 7.1 | B5 |
+| 8-check gate with failure outcomes per check, ambiguity returns HOLD | v2 6.3 | B5 |
+| Permissions matrix 6.4 stored as data, roles: transaction analyst, recon analyst, reversal officer, supervisor, head of ops, risk/compliance, admin/integration, executive, agent | v2 6.4 | B1 |
+| Event envelope, `POST /v1/events` with 202, 200, 409, 422, 429 | v2 7.2 | B2 |
+| Core API list (events, transactions, exceptions, cases, complaints, reversals, approvals, audit, killswitch) | v2 7.3 | B1 to B7 |
+| Source Authority Matrix, to be completed in discovery | v2 7.5 | B2, B5 |
+| Reliability patterns: at-least-once with dedupe, outbox, DLQ with replay, circuit breaker, single-writer reversal with lock, reconciliation after outage, per-source freshness | v2 7.6 | B2, B5, B6, B11 |
+
+## 5. Items in the playbooks that the brief and the first matrix did not list
+
+These are real backend requirements found in the documents and are now tracked:
+
+1. Kill switch at four scopes (global, rail, exception type, policy) with dual control to re-enable. Brief mentioned one switch. (B1, B5)
+2. Regulatory clock registry table with source, status (confirmed, reported, draft, conflicting) and effective date. (B1, B10)
+3. Delegation, out-of-office reassignment and on-call model. (B1)
+4. Reason-gated unmask endpoint with rate limit, and audit of reads of sensitive data. (B1)
+5. MFA claim enforcement for privileged actions. (B1)
+6. Rules in shadow mode before activation, rollback, maker-checker on rule changes. (B3)
+7. Unmatched evidence queue with audited manual link. (B2)
+8. Per-source freshness status and clock-skew measurement. Stale evidence cannot satisfy gate checks. (B2, B5)
+9. Detection latency measurement from source time to case creation, reporting p50 and p95. (B2, B8)
+10. SLA pause rules: named external dependency only, who may pause, maximum pause. (B4)
+11. Repeat-contact count and linking of duplicate customer reports. (B4, B10)
+12. Labelled example store with ops confirmation before training use. (B10)
+13. Simulator with ground-truth label file, shuffled replay equals identical projection. (B2)
+14. Per-tenant AI data boundary and mask-before-external-call. (B10, AI gateway)
+
+## 6. Conflicts and gaps between documents
+
+| Item | Finding |
+|---|---|
+| Stack | v2 default is Python and FastAPI. Owner approved Go. Recorded in ADR 0002. |
+| Idempotency and duplicate windows | Scope puts them in Redis. ADR 0002 keeps keys and locks in PostgreSQL, with Redis as optional cache only. |
+| Money type | v2 contract uses `amount_minor`. PR template says `NUMERIC(18,4)`. See D14. |
+| JSON naming | v2 uses snake_case. Web app and current Go use camelCase. See D15. |
+| Reversal table | Scope says its field list was cut off in the original. Fields are proposed, not authoritative. |
+| POS/web clock | 72 h versus 48 h. See D18. |
+| ATM newer guidelines | Some outlets say draft, some say issued. Final status unconfirmed. |
+| Existing OpenAPI and web types | Differ from the v2 contract (paths, casing, channel and exception type names, role names `ANALYST_MAKER` and `SUPERVISOR_CHECKER` versus the v2 matrix). To reconcile in the contract freeze. |
+
+## 7. Safety rules carried into every phase
+
+Source: v2 Shared Preamble rules 1 to 11 and brief section 5. Each needs a named test before its phase can close.
+
+- S1 Unknown is not failed. Unknown never triggers automatic reversal.
+- S2 Eight checks, any failure blocks automatic reversal, ambiguity returns HOLD.
+- S3 Three separate reversal tracks. An acknowledgement is not proof of posting.
+- S4 Maker and checker differ. Admin does not bypass.
+- S5 Evidence and transitions are append-only.
+- S6 Retries and duplicate submits have no second financial effect.
+- S7 Execution off by default, kill switch honoured by every consumer.
+- S8 AI cannot execute, fabricate evidence, or override deterministic controls.
+- S9 All execution is simulated and labelled. No customer is told funds are returned before verification.
+- S10 Regulatory, rail, SLA and threshold values are configuration with source and VERIFY flag.
+
+## 8. Phase mapping summary
+
+| Phase | Status |
+|---|---|
+| B0 | Code delivered on `feat/backend-b0-foundation`, awaiting review. Exit gate assessed in `b0-report.md`: met for everything that was run, with listed exceptions |
+| B1 to B11 | Not started |

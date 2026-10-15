@@ -1,6 +1,6 @@
 # Proposed Backend Module Layout
 
-Status: proposal, written for the Go option recommended in ADR 0002. If D1 is decided the other way the same boundaries apply with Python package names.
+Status: proposal. The Go stack is approved (ADR 0002). The package list is a starting point and may change as phases land.
 
 ## Runtime processes
 
@@ -11,7 +11,7 @@ Status: proposal, written for the Go option recommended in ADR 0002. If D1 is de
 | Migrator | `cmd/migrate` | Applies and reports schema migrations |
 | Simulator | `cmd/simulator` | Deterministic synthetic traffic and scenario replay (non-production builds only) |
 
-All four share `internal/` packages and one database. There are no network calls between them other than Redis Streams and Postgres.
+All four share `internal/` packages and one PostgreSQL database. PostgreSQL is the system of record. They exchange events through Redis Streams fed by the transactional outbox. The mock status, reversal and notification services run as separate compose services and are reached only through their interface contracts.
 
 ## Packages under `apps/api/internal`
 
@@ -26,6 +26,7 @@ All four share `internal/` packages and one database. There are no network calls
 | `audit` | Append-only hash-chained store | yes, in memory |
 | `policy` | Versioned configuration, thresholds, limits, business calendar | no |
 | `ingest` | Canonical event, validation, normalisation, dedup, replay | partial (`transactions`) |
+| `outbox` | Transactional outbox table, relay to Redis Streams, consumer helpers with retry and dead-letter | no |
 | `channels` | Per-rail adapters behind one interface | no (`integrations` empty) |
 | `detect` | Deterministic detectors and rule versions | partial (`exceptions`) |
 | `cases` | Queue, lifecycle, SLA, escalation | no (`investigations` empty) |

@@ -1,33 +1,47 @@
 # ADR 0002: Backend Stack and Modular Monolith
 
-Status: Proposed. Awaiting approval of D1 and D2 in `docs/backend/decisions-requiring-approval.md`.
+Status: Accepted for D1 and D2 (approved by the project owner on 2026-10-15). Other items in `docs/backend/decisions-requiring-approval.md` stay open and are not decided here.
 
 ## Context
 
-ADR 0001 is a placeholder. The repository already assumes a Go API (`apps/api`, Chi, `Dockerfile.api`, CI job, `implement.md`) and a Python FastAPI service for AI (`apps/ai-service`). The backend brief proposes Python and FastAPI for the whole backend and also asks that existing conventions be followed.
+ADR 0001 is a placeholder. The repository already uses a Go API (`apps/api`, Chi, `Dockerfile.api`, CI job) and a Python FastAPI service for AI (`apps/ai-service`). The Track H default stack in the v2 prompt pack names Python and FastAPI for the backend, but the same document says any layer may be swapped to fit the team. The project owner has approved keeping Go.
 
-## Decision (proposed)
+The v2 prompt B0 asks for service decomposition, a modular monolith recommendation, technology selection with alternatives, data store definitions, a tenancy strategy, repository layout, CI stages, and rejected alternatives with reasons. This ADR covers the stack and process model. Tenancy and authentication detail belong to B1 ADRs.
 
-1. Keep Go with Chi for the core API, worker, migrator and simulator.
-2. Keep Python and FastAPI for the AI service only. The backend talks to it through a typed adapter with timeouts and rule-based fallbacks.
-3. Build a modular monolith: one codebase, separately runnable API and worker processes, one Postgres database.
-4. Use PostgreSQL 16 with row-level security for tenant isolation, and `NUMERIC(18,4)` for money.
-5. Use Redis 7 Streams for ingestion and jobs, with a transactional outbox so a committed change is never lost before publication.
-6. Isolate reversal execution in one package that only the reversal service can import.
-7. Version the API under `/v1`, defined OpenAPI first in `packages/api-contracts`.
-8. Run all financial execution through a mock provider, off by default, with a kill switch.
+## Decision
 
-## Alternatives considered
+1. **Language.** Go with Chi for the API, worker, migrator and simulator. Toolchain target is Go 1.27.2, declared once in `go.mod` and matched in CI, Docker and documentation. Python and FastAPI remain for the AI service only and are owned by the AI/ML developer.
+2. **Process model.** Modular monolith in one repository. Separately runnable API, worker, migrator and simulator binaries share `internal/` packages. Reversal execution sits behind a single package with its own credentials, importable only by the reversal service.
+3. **System of record.** PostgreSQL 16 is the only authoritative store for transactions, events, exceptions, cases, reversals, approvals, configuration and audit. Redis is never the source of truth for a financial outcome.
+4. **Messaging.** Redis 7 Streams carries asynchronous events between the API and workers. State changes that must publish an event are written with a transactional outbox row in PostgreSQL, and a relay publishes outbox rows to Redis Streams. Consumers are idempotent, use consumer groups, recover pending entries after a crash, retry with bounded backoff and move poison messages to a dead-letter stream with replay tooling. Losing Redis must not lose a committed state change: the outbox is replayed.
+5. **Redis uses.** Stream transport, short-lived caches and rate limit counters. Idempotency keys and remediation locks are persisted in PostgreSQL (unique constraints). A Redis lock may be added later only as an optimisation in front of the database constraint, never in place of it.
+6. **API.** Versioned under `/v1`, OpenAPI first, with contract tests that fail when routes and specification diverge. One OpenAPI file per external interface listed in scope section 13.3, so a real integration can replace a mock without engine changes.
+7. **Tenancy.** Shared schema, `tenant_id` on every tenant table, PostgreSQL row-level security as a second line of defence. Detailed in a B1 ADR.
+8. **Financial execution.** Simulated only. Disabled by default, with a kill switch at global, rail, exception-type and policy scope.
+9. **Mock integrations.** Status, reversal and notification mocks run as separate compose services with real-shaped contracts and an explicit `simulated` marker in every response.
 
-| Option | Reason not chosen |
+## Alternatives considered and rejected
+
+| Option | Reason rejected |
 |---|---|
-| Python and FastAPI for everything | Discards existing Go scaffolding, Dockerfile and CI. Reasonable if the team decides speed of delivery outweighs that cost. |
-| Microservices | No scaling or ownership reason at this stage. Adds failure modes in a system where partial failure causes financial risk. |
-| Database-only queue | Simpler, but no consumer groups or easy replay. Outbox pattern keeps the useful part. |
+| Python and FastAPI for the whole backend | Matches the playbook default stack, but the owner chose Go. It would also discard the existing Go scaffold, Dockerfile and CI. |
+| Microservices from the start | No team-size or scaling reason. More network failure modes in a system where partial failure has financial consequences. Modular boundaries keep extraction possible later. |
+| Kafka | Heavier to run for the hackathon. Streams semantics are sufficient. The consumer interface stays abstract so Kafka can replace it. |
+| Redis as primary store or lock authority | Loses data on failure modes that PostgreSQL survives. Not acceptable for financial outcomes or idempotency. |
+| Publish to Redis directly from the request path | A crash between commit and publish loses events. The outbox removes that gap. |
+| Database-only queue | Simpler, but no consumer groups or cheap replay. The outbox keeps the useful part. |
+| Temporal-class workflow engine | Operational overhead not justified for the MVP. The case lifecycle is an in-process state machine with persisted transitions. |
+| Schema-per-tenant | Harder migrations. Row-level security with isolation tests is preferred. |
 
 ## Consequences
 
-- Dependency versions must be confirmed at B0 time (`go.sum` is missing today).
-- Go version must be aligned across `go.mod`, CI and docs (D11).
-- Existing in-memory packages are treated as prototypes. They are replaced, not extended, where they conflict with the safety rules (auth, audit).
-- If D1 goes to Python, this ADR is superseded and the module layout is translated, not redesigned.
+- Dependency compatibility with Go 1.27.2 has to be verified and recorded. Any blocker is reported, not worked around silently.
+- The existing in-memory packages are prototypes. Auth and audit are replaced in B1, and the demo login is disabled in B0.
+- The outbox adds one table, one relay process and a duplicate-delivery obligation on every consumer.
+- Ordering is per aggregate only. Consumers must tolerate late and out-of-order events, as the v2 reliability patterns require.
+- Items the playbooks leave to the mentors stay open: status-query-first policy details, approval thresholds, and the meaning of "within regulatory limits". They are configuration with a VERIFY flag, not code constants.
+
+## Verification still required
+
+- Compatibility of `chi`, `jwt`, `uuid` and the chosen PostgreSQL and Redis drivers with Go 1.27.2.
+- Redis Streams consumer recovery behaviour, covered by integration tests in B2.
