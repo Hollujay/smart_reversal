@@ -102,6 +102,8 @@ services:
     environment:
       <<: *backend-env
       WORKER_HEALTH_PORT: 8081
+    ports:
+      - "${WORKER_HEALTH_PORT:-8081}:8081"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/v1/ready"]
       interval: 15s
