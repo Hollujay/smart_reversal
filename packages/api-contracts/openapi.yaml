@@ -565,6 +565,62 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/reconciliation/reversals:
+    get:
+      tags: [Reversals]
+      operationId: reconcileReversals
+      summary: Compare recorded reversals with the ledger
+      description: |
+        Each reversal is MATCHED, AMOUNT_MISMATCH, MISSING_POSTING,
+        POSTED_NOT_VERIFIED, IN_FLIGHT or NOT_SUBMITTED. Ledger credits that no
+        reversal accounts for are listed as ORPHAN_POSTING. The ledger is
+        synthetic (`simulated: true`).
+      x-status: implemented
+      responses:
+        '200':
+          description: Reconciliation rows and counts by result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, counts, simulated]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reversal_ref: { type: string }
+                        instruction_ref: { type: string }
+                        amount_minor: { type: string }
+                        ledger_amount_minor: { type: string }
+                        currency: { type: string }
+                        financial_status: { type: string }
+                        result: { type: string }
+                  counts: { type: object, additionalProperties: { type: integer } }
+                  simulated: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/reports/summary:
+    get:
+      tags: [Reversals]
+      operationId: getSummaryReport
+      summary: Dashboard numbers
+      description: |
+        Counts by transaction state, case status and classification, reversal
+        tracks, verified value (decimal string of minor units), the share of
+        verified reversals that automation carried out, and average seconds from
+        opening to resolution. Everything here is simulated demonstration data.
+      x-status: implemented
+      responses:
+        '200':
+          description: Summary figures.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/audit:
     get:
       tags: [Governance]

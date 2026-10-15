@@ -105,6 +105,8 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/cases/{id}/reversal-eligibility", o.Services.reversalEligibility)
 					pr.Get("/approvals", o.Services.listApprovals)
 					pr.Post("/approvals/{id}/decision", o.Services.decideApproval)
+					pr.Get("/reconciliation/reversals", o.Services.reconcileReversals)
+					pr.Get("/reports/summary", o.Services.summaryReport)
 				}
 				if o.Services.KillSwitch != nil {
 					pr.Get("/killswitch", o.Services.getKillSwitch)

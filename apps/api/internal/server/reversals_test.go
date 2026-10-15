@@ -240,3 +240,39 @@ func TestAnUnknownOutcomeCannotBeReversedOverHTTP(t *testing.T) {
 		t.Fatalf("unknown outcome must be blocked: %d %s", code, out)
 	}
 }
+
+func TestReconciliationAndSummaryReflectVerifiedAndOrphanPostings(t *testing.T) {
+	r := newRevRig(t)
+	_, c := r.failed(t, "REF-H4")
+	r.confirm(t, "REF-H4")
+	body := `{"case_id":"` + c.ID.String() + `","reason_code":"CONFIRMED_FAILED_CREDIT"}`
+	code, out := r.call("POST", "/v1/reversals", r.as(t, "REVERSAL_OFFICER"), body, "Idempotency-Key", "k-r")
+	if code != 202 {
+		t.Fatalf("%d %s", code, out)
+	}
+	code, out = r.call("POST", "/v1/approvals/"+decode(t, out)["approval_id"].(string)+"/decision", r.mfa(t, uuid.New(), "SUPERVISOR"), `{"decision":"approved"}`)
+	if code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	// A credit the system never asked for.
+	if _, err := r.pool.Exec(context.Background(), `INSERT INTO sim_ledger_entries (tenant_id, instruction_ref, kind, reversal_ref, amount_minor, currency)
+		VALUES ($1, 'GHOST-1', 'REVERSAL_CREDIT', 'RV-GHOST', 100, 'NGN')`, r.tenant); err != nil {
+		t.Fatal(err)
+	}
+	code, out = r.call("GET", "/v1/reconciliation/reversals", r.as(t, "REVERSAL_OFFICER"), "")
+	counts := decode(t, out)["counts"].(map[string]any)
+	if code != 200 || counts["MATCHED"] != float64(1) || counts["ORPHAN_POSTING"] != float64(1) {
+		t.Fatalf("recon: %d %s", code, out)
+	}
+	code, out = r.call("GET", "/v1/reports/summary", r.as(t, "REVERSAL_OFFICER"), "")
+	m := decode(t, out)
+	if code != 200 || m["reversals_verified"] != float64(1) || m["reversals_verified_value_minor"] != "1850000" || m["simulated"] != true {
+		t.Fatalf("summary: %d %s", code, out)
+	}
+	if m["resolved_cases"] != float64(1) {
+		t.Fatalf("the verified reversal should have resolved the case: %s", out)
+	}
+	if code, _ = r.call("GET", "/v1/reports/summary", "", ""); code != 401 {
+		t.Fatalf("unauthenticated: %d", code)
+	}
+}
