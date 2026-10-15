@@ -1,0 +1,330 @@
+// Package configsvc holds versioned, maker-checker configuration (FR-39).
+//
+// Rules, thresholds, windows, approval limits and waiting times live here, not in
+// code. Every change is a new immutable version with its source and verification
+// status, takes effect only after a different person approves it, and is written
+// to the audit chain. Nothing is guessed: a key with no approved version is
+// "not configured", and callers must treat that as a reason to stop.
+package configsvc
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
+)
+
+// Errors callers can test for.
+var (
+	ErrUnknownKey     = errors.New("configsvc: unknown configuration key")
+	ErrInvalidValue   = errors.New("configsvc: value is not valid for this key")
+	ErrInvalidInput   = errors.New("configsvc: invalid input")
+	ErrNotConfigured  = errors.New("configsvc: no approved value for this key")
+	ErrNotFound       = errors.New("configsvc: no such version")
+	ErrAlreadyDecided = errors.New("configsvc: this version already has a decision")
+	ErrSelfApproval   = errors.New("configsvc: the proposer cannot decide their own change")
+	ErrConflict       = errors.New("configsvc: another change to this key was made at the same time")
+)
+
+// KeyDef describes a configuration key and the values it accepts.
+type KeyDef struct {
+	Pattern     *regexp.Regexp
+	Min, Max    int64
+	Unit        string
+	Description string
+}
+
+// Keys is the registry of configuration keys. A value is stored only for a key
+// that matches one of these, and must be an integer in range. No defaults are
+// built in: the registry says what can be configured, never what the value is.
+var Keys = []KeyDef{
+	{regexp.MustCompile(`^duplicate\.window_seconds$`), 1, 3600, "seconds", "Window for flagging a potential duplicate debit"},
+	{regexp.MustCompile(`^status_query\.freshness_seconds$`), 1, 86400, "seconds", "How old a status answer may be and still count as fresh evidence"},
+	{regexp.MustCompile(`^waiting_threshold_seconds\.[A-Z0-9_]{2,30}$`), 0, 7 * 86400, "seconds", "How long to wait on a rail before a reversal may be considered"},
+	{regexp.MustCompile(`^approval\.auto_limit_minor$`), 0, 1 << 52, "minor units", "Largest amount that may be reversed without a human approval"},
+	{regexp.MustCompile(`^approval\.limit_minor\.[A-Z_]{3,40}$`), 0, 1 << 52, "minor units", "Largest amount a role may approve"},
+	{regexp.MustCompile(`^sla\.pause_max_hours$`), 0, 24 * 30, "hours", "Longest an SLA clock may stay paused without supervisor re-approval"},
+}
+
+// Lookup returns the definition for key.
+func Lookup(key string) (KeyDef, bool) {
+	for _, d := range Keys {
+		if d.Pattern.MatchString(key) {
+			return d, true
+		}
+	}
+	return KeyDef{}, false
+}
+
+var verifyStatuses = map[string]bool{"confirmed": true, "unverified": true, "reported": true, "draft": true, "conflicting": true}
+
+// ProposeInput is a requested change.
+type ProposeInput struct {
+	Key             string
+	Value           json.RawMessage
+	SourceReference string
+	EffectiveFrom   time.Time
+	VerifyStatus    string
+	Reason          string
+}
+
+// Version is one stored version of a key, with its decision if there is one.
+type Version struct {
+	Key             string
+	Version         int
+	Value           int64
+	SourceReference string
+	EffectiveFrom   time.Time
+	VerifyStatus    string
+	ProposedBy      uuid.UUID
+	Reason          string
+	CreatedAt       time.Time
+	// Decision is "", "approved" or "rejected".
+	Decision       string
+	DecidedBy      uuid.UUID
+	DecidedAt      *time.Time
+	DecisionReason string
+}
+
+// Service reads and writes configuration. It holds no state.
+type Service struct {
+	Audit *audit.Appender
+	// Now defaults to time.Now.
+	Now func() time.Time
+}
+
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func parseValue(def KeyDef, raw json.RawMessage) (int64, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return 0, ErrInvalidValue
+	}
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("%w: expected an integer", ErrInvalidValue)
+	}
+	i, err := n.Int64()
+	if err != nil {
+		return 0, fmt.Errorf("%w: expected an integer", ErrInvalidValue)
+	}
+	if i < def.Min || i > def.Max {
+		return 0, fmt.Errorf("%w: must be between %d and %d %s", ErrInvalidValue, def.Min, def.Max, def.Unit)
+	}
+	return i, nil
+}
+
+// Propose records a new version that is not yet in effect. tx must be a tenant
+// transaction. The change and its audit record commit together.
+func (s *Service) Propose(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UUID, in ProposeInput) (Version, error) {
+	def, ok := Lookup(in.Key)
+	if !ok {
+		return Version{}, ErrUnknownKey
+	}
+	value, err := parseValue(def, in.Value)
+	if err != nil {
+		return Version{}, err
+	}
+	now := s.now()
+	switch {
+	case maker == uuid.Nil || tenant == uuid.Nil:
+		return Version{}, fmt.Errorf("%w: proposer and tenant are required", ErrInvalidInput)
+	case strings.TrimSpace(in.SourceReference) == "":
+		return Version{}, fmt.Errorf("%w: a source reference is required", ErrInvalidInput)
+	case len(strings.TrimSpace(in.Reason)) < 10:
+		return Version{}, fmt.Errorf("%w: a reason of at least 10 characters is required", ErrInvalidInput)
+	case !verifyStatuses[in.VerifyStatus]:
+		return Version{}, fmt.Errorf("%w: verify status must be confirmed, unverified, reported, draft or conflicting", ErrInvalidInput)
+	case in.EffectiveFrom.IsZero():
+		return Version{}, fmt.Errorf("%w: an effective date is required", ErrInvalidInput)
+	case in.EffectiveFrom.Before(now.Add(-time.Minute)):
+		return Version{}, fmt.Errorf("%w: a change cannot take effect in the past", ErrInvalidInput)
+	case in.EffectiveFrom.After(now.AddDate(1, 0, 0)):
+		return Version{}, fmt.Errorf("%w: a change cannot be scheduled more than a year ahead", ErrInvalidInput)
+	}
+
+	var next int
+	if err := tx.QueryRow(ctx, `SELECT coalesce(max(version), 0) + 1 FROM config_versions WHERE tenant_id = $1 AND key = $2`,
+		tenant, in.Key).Scan(&next); err != nil {
+		return Version{}, fmt.Errorf("configsvc: next version: %w", err)
+	}
+	canonical, _ := json.Marshal(value)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO config_versions (tenant_id, key, version, value, source_reference, effective_from, verify_status, proposed_by, reason, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		tenant, in.Key, next, canonical, strings.TrimSpace(in.SourceReference), in.EffectiveFrom.UTC(), in.VerifyStatus, maker, strings.TrimSpace(in.Reason), now)
+	if err != nil {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" {
+			return Version{}, ErrConflict
+		}
+		return Version{}, fmt.Errorf("configsvc: insert: %w", err)
+	}
+
+	if _, err := s.Audit.Append(ctx, tx, tenant, audit.Event{
+		Actor: audit.ActorUser, ActorID: maker, Action: "config.proposed",
+		SubjectType: "config", SubjectID: fmt.Sprintf("%s@%d", in.Key, next),
+		Details: map[string]any{"key": in.Key, "version": next, "value": value, "verify_status": in.VerifyStatus,
+			"source_reference": strings.TrimSpace(in.SourceReference), "effective_from": in.EffectiveFrom.UTC().Format(time.RFC3339)},
+	}); err != nil {
+		return Version{}, err
+	}
+	return Version{Key: in.Key, Version: next, Value: value, SourceReference: strings.TrimSpace(in.SourceReference),
+		EffectiveFrom: in.EffectiveFrom.UTC(), VerifyStatus: in.VerifyStatus, ProposedBy: maker,
+		Reason: strings.TrimSpace(in.Reason), CreatedAt: now}, nil
+}
+
+// Decide approves or rejects a proposed version. The checker must be a different
+// person from the proposer. A version is decided once.
+func (s *Service) Decide(ctx context.Context, tx pgx.Tx, tenant, checker uuid.UUID, key string, version int, approve bool, reason string) (Version, error) {
+	if _, ok := Lookup(key); !ok {
+		return Version{}, ErrUnknownKey
+	}
+	if checker == uuid.Nil {
+		return Version{}, fmt.Errorf("%w: decider is required", ErrInvalidInput)
+	}
+	if !approve && strings.TrimSpace(reason) == "" {
+		return Version{}, fmt.Errorf("%w: a reason is required to reject", ErrInvalidInput)
+	}
+	v, err := s.version(ctx, tx, tenant, key, version)
+	if err != nil {
+		return Version{}, err
+	}
+	if v.Decision != "" {
+		return Version{}, ErrAlreadyDecided
+	}
+	if v.ProposedBy == checker {
+		return Version{}, ErrSelfApproval
+	}
+
+	decision := "rejected"
+	if approve {
+		decision = "approved"
+	}
+	now := s.now()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO config_decisions (tenant_id, key, version, decision, decided_by, reason, decided_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`, tenant, key, version, decision, checker, strings.TrimSpace(reason), now); err != nil {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) {
+			switch pg.Code {
+			case "23505":
+				return Version{}, ErrAlreadyDecided
+			case "23001": // restrict_violation from the maker-checker trigger
+				return Version{}, ErrSelfApproval
+			}
+		}
+		return Version{}, fmt.Errorf("configsvc: decide: %w", err)
+	}
+
+	if _, err := s.Audit.Append(ctx, tx, tenant, audit.Event{
+		Actor: audit.ActorUser, ActorID: checker, Action: "config." + decision,
+		SubjectType: "config", SubjectID: fmt.Sprintf("%s@%d", key, version), ReasonCode: strings.TrimSpace(reason),
+		Details: map[string]any{"key": key, "version": version, "proposed_by": v.ProposedBy.String()},
+	}); err != nil {
+		return Version{}, err
+	}
+	v.Decision, v.DecidedBy, v.DecidedAt, v.DecisionReason = decision, checker, &now, strings.TrimSpace(reason)
+	return v, nil
+}
+
+const selectVersion = `
+	SELECT v.key, v.version, (v.value #>> '{}')::bigint, v.source_reference, v.effective_from, v.verify_status,
+	       v.proposed_by, v.reason, v.created_at,
+	       coalesce(d.decision, ''), d.decided_by, d.decided_at, coalesce(d.reason, '')
+	FROM config_versions v
+	LEFT JOIN config_decisions d ON d.tenant_id = v.tenant_id AND d.key = v.key AND d.version = v.version`
+
+func scanVersion(row pgx.Row) (Version, error) {
+	var v Version
+	var decidedBy *uuid.UUID
+	if err := row.Scan(&v.Key, &v.Version, &v.Value, &v.SourceReference, &v.EffectiveFrom, &v.VerifyStatus,
+		&v.ProposedBy, &v.Reason, &v.CreatedAt, &v.Decision, &decidedBy, &v.DecidedAt, &v.DecisionReason); err != nil {
+		return Version{}, err
+	}
+	if decidedBy != nil {
+		v.DecidedBy = *decidedBy
+	}
+	v.EffectiveFrom, v.CreatedAt = v.EffectiveFrom.UTC(), v.CreatedAt.UTC()
+	return v, nil
+}
+
+func (s *Service) version(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, key string, version int) (Version, error) {
+	v, err := scanVersion(tx.QueryRow(ctx, selectVersion+` WHERE v.tenant_id = $1 AND v.key = $2 AND v.version = $3`, tenant, key, version))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Version{}, ErrNotFound
+	}
+	return v, err
+}
+
+// Effective returns the approved version in force for key at time at. When
+// nothing is approved yet it returns ErrNotConfigured, and callers must not
+// substitute a default.
+func (s *Service) Effective(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, key string, at time.Time) (Version, error) {
+	if _, ok := Lookup(key); !ok {
+		return Version{}, ErrUnknownKey
+	}
+	v, err := scanVersion(tx.QueryRow(ctx, selectVersion+`
+		WHERE v.tenant_id = $1 AND v.key = $2 AND d.decision = 'approved' AND v.effective_from <= $3
+		ORDER BY v.effective_from DESC, v.version DESC LIMIT 1`, tenant, key, at.UTC()))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Version{}, ErrNotConfigured
+	}
+	return v, err
+}
+
+// History returns every version of key, newest first, with decisions.
+func (s *Service) History(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, key string) ([]Version, error) {
+	if _, ok := Lookup(key); !ok {
+		return nil, ErrUnknownKey
+	}
+	rows, err := tx.Query(ctx, selectVersion+` WHERE v.tenant_id = $1 AND v.key = $2 ORDER BY v.version DESC`, tenant, key)
+	if err != nil {
+		return nil, fmt.Errorf("configsvc: history: %w", err)
+	}
+	defer rows.Close()
+	var out []Version
+	for rows.Next() {
+		v, err := scanVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// Rollback proposes the value of an earlier approved version again. It is an
+// ordinary proposal: it needs the same approval and takes effect from
+// effectiveFrom. Only versions that were approved can be rolled back to.
+func (s *Service) Rollback(ctx context.Context, tx pgx.Tx, tenant, maker uuid.UUID, key string, toVersion int, effectiveFrom time.Time, reason string) (Version, error) {
+	old, err := s.version(ctx, tx, tenant, key, toVersion)
+	if err != nil {
+		return Version{}, err
+	}
+	if old.Decision != "approved" {
+		return Version{}, fmt.Errorf("%w: version %d was never approved", ErrInvalidInput, toVersion)
+	}
+	raw, _ := json.Marshal(old.Value)
+	return s.Propose(ctx, tx, tenant, maker, ProposeInput{
+		Key: key, Value: raw, SourceReference: fmt.Sprintf("rollback to version %d (%s)", toVersion, old.SourceReference),
+		EffectiveFrom: effectiveFrom, VerifyStatus: old.VerifyStatus, Reason: reason,
+	})
+}
