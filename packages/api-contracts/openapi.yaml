@@ -623,7 +623,7 @@ components:
       required: [token, reason]
       properties:
         token: { type: string, example: acct_0123456789abcdef0123456789abcdef }
-        reason: { type: string, minLength: 10, example: customer disputes a missing credit, ticket 4411 }
+        reason: { type: string, minLength: 10, example: 'customer disputes a missing credit, ticket 4411' }
     UnmaskResponse:
       type: object
       required: [token, account_number, masked]
