@@ -27,7 +27,7 @@ Recorded in ADR 0002 and the decision register. Open: D4, D5 to D10, D12 to D15,
 | Consumers | Consumer groups, idempotent handling via `processed_events`, redelivery after idle, claiming work from crashed consumers, dead-letter stream, replay | `internal/stream` |
 | Worker | Process that runs the relay and a health endpoint, stops together on failure | `internal/worker`, `cmd/worker` |
 | Helpers | Cursor pagination (max 200), idempotency key validation, request fingerprint | `internal/platform/httpx` |
-| Contracts | `/v1` OpenAPI baseline (2 implemented operations, 14 planned), six external interface contracts, v0.1 moved to `legacy/` | `packages/api-contracts` |
+| Contracts | `/v1` OpenAPI baseline (2 implemented operations, 13 planned), six external interface contracts, v0.1 moved to `legacy/` | `packages/api-contracts` |
 | Contract tests | Spec validity, status on every operation, `/v1` prefix, served routes equal documented routes, six interfaces valid, mock routes equal interface contracts | `internal/contract` |
 | Mocks | Status, reversal and notification stubs: health only, `501` on interface routes, all say simulated and not implemented | `internal/mocks`, `cmd/mock` |
 | Compose | migrate, api, worker, three mocks, with healthchecks, one backend image | `compose.yaml` |
