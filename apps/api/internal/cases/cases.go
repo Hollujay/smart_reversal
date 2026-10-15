@@ -18,6 +18,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/bizcal"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/events"
 )
 
 // Classification codes. The first six come from the scope document. Others
@@ -388,6 +389,14 @@ func (s *Service) Open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, in Open
 	if err := s.audit(ctx, tx, tenant, in.Actor, "case.opened", c, map[string]any{"source": in.Source}); err != nil {
 		return Case{}, false, err
 	}
+	fields := map[string]any{"case_id": c.ID.String(), "case_ref": c.Ref, "classification": c.Classification, "source": c.Source,
+		"priority": c.Priority, "status": c.Status}
+	if c.TxnID != nil {
+		fields["txn_id"] = c.TxnID.String()
+	}
+	if _, err := events.Emit(ctx, tx, tenant, events.Event{Type: events.CaseOpened, AggregateID: c.ID.String(), Key: c.ID.String(), Fields: fields, OccurredAt: opened}); err != nil {
+		return Case{}, false, err
+	}
 	return c, true, nil
 }
 
@@ -500,6 +509,11 @@ func (s *Service) Transition(ctx context.Context, tx pgx.Tx, tenant, caseID uuid
 		return Case{}, err
 	}
 	if err := s.audit(ctx, tx, tenant, a, "case.transitioned", c, map[string]any{"from": from, "to": to, "reason_code": strings.TrimSpace(reason)}); err != nil {
+		return Case{}, err
+	}
+	if _, err := events.Emit(ctx, tx, tenant, events.Event{Type: events.CaseTransitioned, AggregateID: caseID.String(),
+		Key: fmt.Sprintf("%s:%d", caseID, c.Version), OccurredAt: now,
+		Fields: map[string]any{"case_id": caseID.String(), "case_ref": c.Ref, "classification": c.Classification, "from_status": from, "to_status": to, "version": c.Version}}); err != nil {
 		return Case{}, err
 	}
 	return scanCase(tx.QueryRow(ctx, `SELECT `+caseColumns+` FROM cases WHERE tenant_id = $1 AND id = $2`, tenant, caseID))
