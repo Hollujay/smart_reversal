@@ -1,6 +1,6 @@
 # Shared API Contracts (B0 inventory)
 
-Status: draft, reconciled with the v2 shared contract on 2026-10-15. This lists the contracts that the frontend and AI developers will depend on. Nothing here is final until D3 and D4 in `decisions-requiring-approval.md` are answered. Changes to a published contract must be written down and sent to the affected developer.
+Status: draft, reconciled with the v2 shared contract on 2026-10-15. This lists the contracts that the frontend and AI developers will depend on. Nothing here is final until D4, D14 and D15 in `decisions-requiring-approval.md` are answered. Changes to a published contract must be written down and sent to the affected developer.
 
 ## 1. Conventions (aligned with the v2 shared contract, section 7)
 
