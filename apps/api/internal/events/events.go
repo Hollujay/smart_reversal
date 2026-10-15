@@ -53,7 +53,7 @@ type definition struct {
 }
 
 var reversalFields = []string{"reversal_id", "reversal_ref", "case_id", "txn_id", "amount_minor", "currency", "approval_status",
-	"accepted_status", "processing_status", "financial_status", "requested_by_type"}
+	"accepted_status", "processing_status", "financial_status", "requested_by_type", "policy_id"}
 
 // registry is the complete list of events and the fields each may carry.
 var registry = map[string]definition{

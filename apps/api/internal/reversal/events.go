@@ -24,7 +24,7 @@ func (s *Service) emit(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, typ str
 	fields := map[string]any{"reversal_id": rev.ID.String(), "reversal_ref": rev.Ref, "case_id": rev.CaseID.String(), "txn_id": rev.TxnID.String(),
 		"amount_minor": strconv.FormatInt(rev.AmountMinor, 10), "currency": rev.Currency, "approval_status": rev.ApprovalStatus,
 		"accepted_status": rev.AcceptedStatus, "processing_status": rev.ProcessingStatus, "financial_status": rev.FinancialStatus,
-		"requested_by_type": rev.RequestedByType}
+		"requested_by_type": rev.RequestedByType, "policy_id": rev.PolicyID}
 	for k, v := range extra {
 		fields[k] = v
 	}

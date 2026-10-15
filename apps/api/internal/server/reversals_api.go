@@ -36,6 +36,8 @@ type reversalJSON struct {
 	ApprovalID      string        `json:"approval_id,omitempty"`
 	Tracks          tracksJSON    `json:"tracks"`
 	Gate            reversal.Gate `json:"gate"`
+	PolicyID        string        `json:"policy_id"`
+	PolicyVersion   string        `json:"policy_version"`
 	ProviderRef     string        `json:"provider_ref,omitempty"`
 	FailureReason   string        `json:"failure_reason,omitempty"`
 	SubmittedAt     *time.Time    `json:"submitted_at,omitempty"`
@@ -49,7 +51,7 @@ func toReversalJSON(r reversal.Reversal) reversalJSON {
 	out := reversalJSON{ID: r.ID.String(), ReversalRef: r.Ref, CaseID: r.CaseID.String(), TxnID: r.TxnID.String(),
 		AmountMinor: strconv.FormatInt(r.AmountMinor, 10), Currency: r.Currency, ReasonCode: r.ReasonCode, RequestedByType: r.RequestedByType,
 		ApprovalStatus: r.ApprovalStatus, Tracks: tracksJSON{r.AcceptedStatus, r.ProcessingStatus, r.FinancialStatus}, Gate: r.Gate,
-		ProviderRef: r.ProviderRef, FailureReason: r.FailureReason, SubmittedAt: r.SubmittedAt, PostedAt: r.PostedAt, VerifiedAt: r.VerifiedAt,
+		PolicyID: r.PolicyID, PolicyVersion: r.PolicyVersion, ProviderRef: r.ProviderRef, FailureReason: r.FailureReason, SubmittedAt: r.SubmittedAt, PostedAt: r.PostedAt, VerifiedAt: r.VerifiedAt,
 		CreatedAt: r.CreatedAt, Simulated: true}
 	if r.ApprovalID != uuid.Nil {
 		out.ApprovalID = r.ApprovalID.String()

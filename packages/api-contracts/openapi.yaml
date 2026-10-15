@@ -1538,6 +1538,8 @@ components:
         approval_id: { type: string, format: uuid }
         tracks: { $ref: '#/components/schemas/ReversalTracks' }
         gate: { $ref: '#/components/schemas/Gate' }
+        policy_id: { type: string, example: reversal.FAIL001.NIP, description: Stable identity of the policy that governed the decision. }
+        policy_version: { type: string, description: Versions of the configuration in force when the reversal was decided. Never rewritten. }
         provider_ref: { type: string }
         failure_reason: { type: string }
         submitted_at: { type: string, format: date-time }
