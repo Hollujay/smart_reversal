@@ -11,6 +11,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 )
 
 // Options configures NewRouter.
@@ -26,6 +27,9 @@ type Options struct {
 	Verifier *identity.Verifier
 	// Auth handles POST /v1/auth/login. Nil leaves the route out entirely.
 	Auth *identity.Authenticator
+	// ServiceVerifier checks assertions from other services. Nil leaves out the
+	// machine routes such as event ingestion.
+	ServiceVerifier *servauth.Verifier
 	// Services enables the routes that need a database, a permission policy and
 	// the audit trail. Nil leaves them out.
 	Services *Services
@@ -60,6 +64,11 @@ func NewRouter(o Options) http.Handler {
 			v1.Post("/auth/login", ar.login)
 		}
 
+		// Machine routes: a service assertion with the right scope, no operator token.
+		if o.ServiceVerifier != nil && o.Services.ready() && o.Services.Txn != nil {
+			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/events", o.Services.ingestEvent)
+		}
+
 		// Everything below needs a valid operator token. Routes are added only
 		// inside this group, so a new route cannot be public by accident.
 		v1.Group(func(pr chi.Router) {
@@ -75,6 +84,10 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/calendar/add-working-days", o.Services.addWorkingDays)
 					pr.Get("/calendar/business-time", o.Services.businessTime)
 					pr.Get("/calendar/next-cutoff", o.Services.nextCutoff)
+				}
+				if o.Services.Txn != nil {
+					pr.Get("/transactions", o.Services.listTransactions)
+					pr.Get("/transactions/{id}", o.Services.getTransaction)
 				}
 				if o.Services.KillSwitch != nil {
 					pr.Get("/killswitch", o.Services.getKillSwitch)

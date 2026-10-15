@@ -74,6 +74,9 @@ func (a *Amount) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// String returns the amount as decimal digits.
+func (a Amount) String() string { return strconv.FormatInt(int64(a), 10) }
+
 // MarshalJSON writes the amount as a decimal string.
 func (a Amount) MarshalJSON() ([]byte, error) { return json.Marshal(strconv.FormatInt(int64(a), 10)) }
 

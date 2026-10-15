@@ -17,6 +17,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
+	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
 // Services are the collaborators that protected routes share.
@@ -30,6 +31,9 @@ type Services struct {
 	Config *configsvc.Service
 	// KillSwitch enables the /v1/killswitch routes. Nil leaves them out.
 	KillSwitch *killswitch.Service
+	// Txn enables transaction ingestion (needs ServiceVerifier on Options) and the
+	// transaction read routes. Nil leaves them out.
+	Txn *txn.Service
 	// UnmaskLimit reveals are allowed per UnmaskWindow for each caller.
 	// Defaults are 10 per 10 minutes.
 	UnmaskLimit  int
