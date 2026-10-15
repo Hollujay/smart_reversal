@@ -62,6 +62,8 @@ func TestLoadEmptyDirIsFine(t *testing.T) {
 	}
 }
 
+// testPool returns a pool whose search_path is a private schema, so these tests
+// never touch the tables other packages' tests rely on.
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -70,7 +72,30 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, url)
+
+	const schema = "sr_migrate_pkg_test"
+	admin, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE; CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		a, err := pgxpool.New(context.Background(), url)
+		if err == nil {
+			_, _ = a.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
+			a.Close()
+		}
+	})
+
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

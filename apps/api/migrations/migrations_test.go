@@ -37,7 +37,25 @@ func TestEmbeddedMigrationsApplyAndRevert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, url)
+	// Run in a private schema so this test cannot disturb tables that other
+	// packages' tests use in the shared database.
+	const schema = "sr_migrations_embedded_test"
+	admin, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE; CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = admin.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`) }()
+
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +67,6 @@ func TestEmbeddedMigrationsApplyAndRevert(t *testing.T) {
 	}
 	r := migrate.New(pool, ms)
 
-	// Start from an empty schema so the test is repeatable.
-	if _, err := r.Down(ctx, len(ms)); err != nil {
-		t.Logf("pre-clean down: %v", err)
-	}
 	if done, err := r.Up(ctx); err != nil || len(done) != len(ms) {
 		t.Fatalf("up: %v %v", done, err)
 	}
