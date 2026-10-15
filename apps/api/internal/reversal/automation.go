@@ -7,7 +7,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/automation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
+	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 )
 
 // AutoResult reports what automation did with one case.
@@ -76,33 +78,61 @@ func (s *Service) AutoReverse(ctx context.Context, tenant, caseID uuid.UUID) (Au
 	return res, nil
 }
 
-// Sweep runs AutoReverse for every open detected case of a reversible type that
-// has no reversal yet, and advances reversals that are still in flight. It is the
-// scheduled job behind the automation (FR-38), and goes through the same gate as
-// any other request.
+// Sweep is the scheduled job behind the automation (FR-38). It does three
+// things, each through the same gate as any other request:
+//
+//  1. asks for a reversal for every open detected case of a reversible type;
+//  2. submits reversals that were approved or authorised but are still waiting,
+//     including ones a freeze parked;
+//  3. checks submitted reversals against the provider and the ledger.
+//
+// Steps 1 and 2 start new submissions and are held back by the kill switch: a
+// global freeze pauses them for the institution, and a narrower freeze skips only
+// the cases it covers, before the gate runs. Step 3 is never held back, because
+// confirming what has already been submitted is always safe. The job's state is
+// recorded so a pause can be seen.
 func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, error) {
-	var candidates, inflight []uuid.UUID
+	type item struct {
+		id    uuid.UUID
+		rail  string
+		class string
+	}
+	var candidates, waiting []item
+	var inflight []uuid.UUID
+	var st killswitch.State
 	err := s.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT c.id FROM cases c
-			WHERE c.tenant_id = $1 AND c.source = 'bot' AND c.classification IN ('FAIL001', 'DUP001') AND c.status IN ('DETECTED', 'UNDER_INVESTIGATION')
-			  AND NOT EXISTS (SELECT 1 FROM reversals r WHERE r.tenant_id = c.tenant_id AND r.case_id = c.id)
-			ORDER BY c.opened_at`, tenant)
-		if err != nil {
-			return err
+		var err error
+		if st, err = s.Kill.State(ctx, tx, tenant); err != nil {
+			return fmt.Errorf("reversal: cannot read the kill switch: %w", err)
 		}
-		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
+		read := func(sql string, into *[]item) error {
+			rows, err := tx.Query(ctx, sql, tenant)
+			if err != nil {
 				return err
 			}
-			candidates = append(candidates, id)
+			defer rows.Close()
+			for rows.Next() {
+				var x item
+				if err := rows.Scan(&x.id, &x.rail, &x.class); err != nil {
+					return err
+				}
+				*into = append(*into, x)
+			}
+			return rows.Err()
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := read(`SELECT c.id, t.rail, c.classification FROM cases c JOIN transactions t ON t.tenant_id = c.tenant_id AND t.id = c.txn_id
+			WHERE c.tenant_id = $1 AND c.source = 'bot' AND c.classification IN ('FAIL001', 'DUP001') AND c.status IN ('DETECTED', 'UNDER_INVESTIGATION')
+			  AND NOT EXISTS (SELECT 1 FROM reversals r WHERE r.tenant_id = c.tenant_id AND r.case_id = c.id)
+			ORDER BY c.opened_at`, &candidates); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, `SELECT id FROM reversals WHERE tenant_id = $1 AND financial_status = 'UNVERIFIED' AND accepted_status IN ('ACCEPTED', 'UNKNOWN')
+		if err := read(`SELECT r.id, t.rail, c.classification FROM reversals r
+			JOIN cases c ON c.tenant_id = r.tenant_id AND c.id = r.case_id JOIN transactions t ON t.tenant_id = r.tenant_id AND t.id = r.txn_id
+			WHERE r.tenant_id = $1 AND r.accepted_status = 'PENDING' AND r.approval_status IN ('NOT_REQUIRED', 'APPROVED') AND r.financial_status = 'UNVERIFIED'
+			ORDER BY r.created_at`, &waiting); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT id FROM reversals WHERE tenant_id = $1 AND financial_status = 'UNVERIFIED' AND accepted_status IN ('ACCEPTED', 'UNKNOWN')
 			AND approval_status IN ('NOT_REQUIRED', 'APPROVED') ORDER BY created_at`, tenant)
 		if err != nil {
 			return err
@@ -122,19 +152,47 @@ func (s *Service) Sweep(ctx context.Context, tenant uuid.UUID) ([]AutoResult, er
 	}
 
 	var out []AutoResult
-	for _, id := range candidates {
-		r, err := s.AutoReverse(ctx, tenant, id)
-		if err != nil {
-			return out, fmt.Errorf("reversal: automatic path for case %s: %w", id, err)
+	heldNew, heldWaiting, started, advanced := 0, 0, 0, 0
+	for _, c := range candidates {
+		if st.Covers(killswitch.Action{Rail: c.rail, ExceptionType: c.class}) != nil {
+			heldNew++
+			continue
 		}
+		r, err := s.AutoReverse(ctx, tenant, c.id)
+		if err != nil {
+			return out, fmt.Errorf("reversal: automatic path for case %s: %w", c.id, err)
+		}
+		started++
 		out = append(out, r)
+	}
+	for _, w := range waiting {
+		if st.Covers(killswitch.Action{Rail: w.rail, ExceptionType: w.class}) != nil {
+			heldWaiting++
+			continue
+		}
+		if _, err := s.Execute(ctx, tenant, w.id); err != nil {
+			return out, fmt.Errorf("reversal: submit %s: %w", w.id, err)
+		}
+		inflight = append(inflight, w.id) // verify it straight away
 	}
 	for _, id := range inflight {
 		if _, err := s.Advance(ctx, tenant, id); err != nil {
 			return out, fmt.Errorf("reversal: advance %s: %w", id, err)
 		}
+		advanced++
 	}
-	return out, nil
+
+	paused := false
+	for _, f := range st.Frozen {
+		if f.Target.Scope == killswitch.ScopeGlobal {
+			paused = true
+		}
+	}
+	err = s.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
+		return automation.RecordJob(ctx, tx, tenant, automation.JobReversalSweep, paused, automation.FrozenSummary(st),
+			map[string]any{"new_requests": started, "held_new_requests": heldNew, "held_submissions": heldWaiting, "verified_or_advanced": advanced})
+	})
+	return out, err
 }
 
 var _ = cases.CodeNoCredit

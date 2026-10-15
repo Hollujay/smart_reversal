@@ -1214,6 +1214,29 @@ components:
               requested_by: { type: string, format: uuid }
               reason: { type: string }
               requested_at: { type: string, format: date-time }
+        deferred_work:
+          type: object
+          description: |
+            Work a freeze is holding back, by kind. `detect` is detection waiting to run
+            after an authorised unfreeze. Nothing is discarded.
+          additionalProperties: { type: integer }
+        parked_reversals:
+          type: integer
+          description: Approved reversals not yet submitted because a freeze covers them.
+        jobs:
+          type: array
+          description: |
+            State of the scheduled jobs. A job is `paused` when a global freeze covers
+            everything it starts. Submitted reversals are still reconciled while paused.
+          items:
+            type: object
+            properties:
+              job: { type: string, example: reversal_sweep }
+              state: { type: string, enum: [running, paused] }
+              frozen: { type: string, example: 'rail:NIP' }
+              since: { type: string, format: date-time }
+              last_run_at: { type: string, format: date-time }
+              last_result: { type: object, additionalProperties: true }
     UnmaskRequest:
       type: object
       required: [token, reason]
