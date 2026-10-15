@@ -211,7 +211,7 @@ paths:
       description: |
         Detected and customer-reported cases in one queue, highest priority first,
         then oldest. Filters: `status`, `classification` (DUP001, FAIL001, UNK001,
-        REV001, STL001, CUS001), `source` (bot, customer, manual) and `txn_id`.
+        REV001, STL001, CUS001, ATM001, FEE001, VND001, MIS001, INC001), `source` (bot, customer, manual) and `txn_id`.
       x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'

@@ -27,11 +27,16 @@ import (
 
 // Rule ids and versions. A change to a rule's behaviour bumps its version.
 const (
-	RuleFailure   = "DET-FAIL-1"
-	RuleUnknown   = "DET-UNK-1"
-	RuleDuplicate = "DET-DUP-1"
-	RuleStuck     = "DET-STUCK-1"
-	RuleVersion   = "1.0"
+	RuleFailure    = "DET-FAIL-1"
+	RuleUnknown    = "DET-UNK-1"
+	RuleDuplicate  = "DET-DUP-1"
+	RuleStuck      = "DET-STUCK-1"
+	RuleATM        = "DET-ATM-1"
+	RuleFee        = "DET-FEE-1"
+	RuleVendor     = "DET-VND-1"
+	RuleMismatch   = "DET-MIS-1"
+	RuleIncomplete = "DET-INC-1"
+	RuleVersion    = "1.0"
 )
 
 // Finding is one detection result.
@@ -101,6 +106,7 @@ func (d *Detector) now() time.Time {
 type txnRow struct {
 	ID             uuid.UUID
 	Ref            string
+	Channel        string
 	Rail           string
 	Amount         int64
 	Currency       string
@@ -114,12 +120,12 @@ type txnRow struct {
 	LastEventAt    time.Time
 }
 
-const txnSelect = `SELECT id, instruction_ref, rail, amount_minor, currency, debit_account_token, beneficiary_token, session_id,
+const txnSelect = `SELECT id, instruction_ref, channel, rail, amount_minor, currency, debit_account_token, beneficiary_token, session_id,
 	lifecycle_state, credit_status, debit_status, first_debit_at, last_event_at FROM transactions`
 
 func scanTxn(row pgx.Row) (txnRow, error) {
 	var t txnRow
-	err := row.Scan(&t.ID, &t.Ref, &t.Rail, &t.Amount, &t.Currency, &t.DebitToken, &t.BeneficiaryTok, &t.SessionID,
+	err := row.Scan(&t.ID, &t.Ref, &t.Channel, &t.Rail, &t.Amount, &t.Currency, &t.DebitToken, &t.BeneficiaryTok, &t.SessionID,
 		&t.Lifecycle, &t.CreditStatus, &t.DebitStatus, &t.FirstDebitAt, &t.LastEventAt)
 	return t, err
 }
@@ -182,9 +188,37 @@ func (d *Detector) evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.U
 
 	switch t.Lifecycle {
 	case txn.StateConfirmedFailure:
-		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeNoCredit, RuleFailure, "", "beneficiary_side_failure",
-			"The debit was posted and the beneficiary credit was reported as failed by the source.", ev)); err != nil {
-			return nil, err
+		switch {
+		case t.Rail == "MISMATCH" || t.Rail == "DISCREPANCY" || t.Channel == "MISMATCH":
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeMismatch, RuleMismatch, "HIGH", "amount_currency_mismatch",
+				"Discrepancy detected between ledger debit amount/currency and switch/settlement confirmation.", ev)); err != nil {
+				return nil, err
+			}
+		case t.Rail == "ATM" || t.Channel == "ATM":
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeAtmFault, RuleATM, "HIGH", "atm_hardware_fault",
+				"ATM cash dispenser hardware failure: debit was posted but physical cash was not dispensed.", ev)); err != nil {
+				return nil, err
+			}
+		case t.Rail == "FEE" || t.Channel == "FEE":
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeDisputedFee, RuleFee, "LOW", "unauthorized_fee_surcharge",
+				"Unauthorized or disputed electronic service fee or surcharge debit.", ev)); err != nil {
+				return nil, err
+			}
+		case t.Rail == "MERCHANT" || t.Rail == "VENDOR" || t.Channel == "GATEWAY" || t.Channel == "MERCHANT" || t.Channel == "USSD":
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeVendorDrop, RuleVendor, "MEDIUM", "vendor_aggregator_drop",
+				"Third-party biller/utility aggregator failed to fulfill transaction after debit posted.", ev)); err != nil {
+				return nil, err
+			}
+		case t.Rail == "INTERCHANGE" || t.Rail == "NIP_SWITCH" || t.Rail == "ACH_SWITCH" || t.Rail == "INTERMEDIARY":
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeIncomplete, RuleIncomplete, "MEDIUM", "multi_leg_routing_drop",
+				"Incomplete multi-leg routing: intermediary switch dropped transfer before reaching beneficiary institution.", ev)); err != nil {
+				return nil, err
+			}
+		default:
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeNoCredit, RuleFailure, "", "beneficiary_side_failure",
+				"The debit was posted and the beneficiary credit was reported as failed by the source.", ev)); err != nil {
+				return nil, err
+			}
 		}
 	case txn.StateUnknown:
 		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleUnknown, "", "switch_response_failure",
@@ -192,9 +226,16 @@ func (d *Detector) evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.U
 			return nil, err
 		}
 	case txn.StateConflicting:
-		if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleUnknown, "", "conflicting_evidence",
-			"Sources disagree: one reports the credit confirmed and another reports it failed.", ev)); err != nil {
-			return nil, err
+		if t.Rail == "MISMATCH" || t.Rail == "DISCREPANCY" || t.Channel == "MISMATCH" {
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeMismatch, RuleMismatch, "HIGH", "amount_currency_mismatch",
+				"Discrepancy detected between ledger debit amount/currency and switch/settlement confirmation.", ev)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := add(d.open(ctx, tx, tenant, ec, t, cases.CodeUnknown, RuleUnknown, "", "conflicting_evidence",
+				"Sources disagree: one reports the credit confirmed and another reports it failed.", ev)); err != nil {
+				return nil, err
+			}
 		}
 	case txn.StateConfirmedSuccess:
 		if err := d.closeLateSuccess(ctx, tx, tenant, ec, t); err != nil {

@@ -12,6 +12,8 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "build:web": "npm run build --workspace=apps/web",
     "build:ui": "npm run build --workspace=packages/ui",
+    "test:web": "npm run test --workspace=apps/web",
+    "test": "npm run test --workspace=apps/web",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

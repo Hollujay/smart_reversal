@@ -103,7 +103,7 @@ func loadTxn(ctx context.Context, tx pgx.Tx, tenant, id uuid.UUID) (txnFacts, er
 
 // eligible exception types. Others are not reversible by this workflow.
 func reversibleCode(code string) bool {
-	return code == cases.CodeNoCredit || code == cases.CodeDuplicate
+	return code == cases.CodeNoCredit || code == cases.CodeDuplicate || code == cases.CodeAtmFault || code == cases.CodeVendorDrop || code == cases.CodeDisputedFee
 }
 
 type policyValues struct {

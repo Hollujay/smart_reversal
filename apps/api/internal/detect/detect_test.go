@@ -397,3 +397,76 @@ func TestTheDetectorRunsOffTheOutboxAndRedisStreams(t *testing.T) {
 		t.Fatalf("cases after the pipeline ran: %+v", cs)
 	}
 }
+
+func TestAtmHardwareFailureOpensATM001Case(t *testing.T) {
+	r := newRig(t)
+	id := r.failedTransfer(t, "ATM-001", r.now.Add(-10*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "ATM"
+		e.Txn.Channel = "ATM"
+	})
+	got := r.eval(t, id)
+	if len(got) != 1 || !got[0].Created || got[0].Case.Classification != cases.CodeAtmFault ||
+		got[0].Case.RuleID != RuleATM || got[0].Case.RootCause != "atm_hardware_fault" ||
+		got[0].Case.Priority != "HIGH" {
+		t.Fatalf("expected ATM001 case, got: %+v", got)
+	}
+}
+
+func TestDisputedFeeOpensFEE001Case(t *testing.T) {
+	r := newRig(t)
+	id := r.failedTransfer(t, "FEE-001", r.now.Add(-10*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "FEE"
+	})
+	got := r.eval(t, id)
+	if len(got) != 1 || !got[0].Created || got[0].Case.Classification != cases.CodeDisputedFee ||
+		got[0].Case.RuleID != RuleFee || got[0].Case.RootCause != "unauthorized_fee_surcharge" ||
+		got[0].Case.Priority != "LOW" {
+		t.Fatalf("expected FEE001 case, got: %+v", got)
+	}
+}
+
+func TestVendorAggregatorDropOpensVND001Case(t *testing.T) {
+	r := newRig(t)
+	id := r.failedTransfer(t, "VND-001", r.now.Add(-10*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Channel = "GATEWAY"
+		e.Txn.Rail = "MERCHANT"
+	})
+	got := r.eval(t, id)
+	if len(got) != 1 || !got[0].Created || got[0].Case.Classification != cases.CodeVendorDrop ||
+		got[0].Case.RuleID != RuleVendor || got[0].Case.RootCause != "vendor_aggregator_drop" ||
+		got[0].Case.Priority != "MEDIUM" {
+		t.Fatalf("expected VND001 case, got: %+v", got)
+	}
+}
+
+func TestIntermediaryRoutingDropOpensINC001Case(t *testing.T) {
+	r := newRig(t)
+	id := r.failedTransfer(t, "INC-001", r.now.Add(-10*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "INTERCHANGE"
+	})
+	got := r.eval(t, id)
+	if len(got) != 1 || !got[0].Created || got[0].Case.Classification != cases.CodeIncomplete ||
+		got[0].Case.RuleID != RuleIncomplete || got[0].Case.RootCause != "multi_leg_routing_drop" ||
+		got[0].Case.Priority != "MEDIUM" {
+		t.Fatalf("expected INC001 case, got: %+v", got)
+	}
+}
+
+func TestAmountMismatchOpensMIS001Case(t *testing.T) {
+	r := newRig(t)
+	r.event(t, "MIS-001", txn.EvDebitPosted, r.now.Add(-5*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "MISMATCH"
+	})
+	r.event(t, "MIS-001", txn.EvCreditConfirmed, r.now.Add(-4*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "MISMATCH"
+	})
+	id := r.event(t, "MIS-001", txn.EvCreditFailed, r.now.Add(-3*time.Minute), func(e *txn.Envelope) {
+		e.Txn.Rail = "MISMATCH"
+	}).TxnID
+	got := r.eval(t, id)
+	if len(got) != 1 || !got[0].Created || got[0].Case.Classification != cases.CodeMismatch ||
+		got[0].Case.RuleID != RuleMismatch || got[0].Case.RootCause != "amount_currency_mismatch" ||
+		got[0].Case.Priority != "HIGH" {
+		t.Fatalf("expected MIS001 case, got: %+v", got)
+	}
+}

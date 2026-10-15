@@ -61,6 +61,11 @@ const CLASSIFICATION_OPTIONS: Array<{ code: ClassificationCode; label: string; d
   { code: 'REV001', label: 'REV001', desc: 'Reversal Attempt Failed' },
   { code: 'STL001', label: 'STL001', desc: 'Suspense Ledger Imbalance' },
   { code: 'CUS001', label: 'CUS001', desc: 'Customer Dispute Lodged' },
+  { code: 'ATM001', label: 'ATM001', desc: 'ATM Hardware / Dispenser Jam' },
+  { code: 'FEE001', label: 'FEE001', desc: 'Disputed Electronic Fee' },
+  { code: 'VND001', label: 'VND001', desc: 'Third-Party Biller / Vendor Drop' },
+  { code: 'MIS001', label: 'MIS001', desc: 'Amount / Currency Mismatch' },
+  { code: 'INC001', label: 'INC001', desc: 'Intermediary Routing Drop' },
 ];
 
 export const ExceptionFilterRail: React.FC<ExceptionFilterRailProps> = ({

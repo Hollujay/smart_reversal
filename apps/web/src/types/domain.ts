@@ -63,7 +63,12 @@ export type ClassificationCode =
   | 'UNK001'
   | 'REV001'
   | 'STL001'
-  | 'CUS001';
+  | 'CUS001'
+  | 'ATM001'
+  | 'FEE001'
+  | 'VND001'
+  | 'MIS001'
+  | 'INC001';
 
 export type ExceptionSource = 'BOT' | 'CUSTOMER';
 

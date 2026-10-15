@@ -30,9 +30,26 @@ const (
 	CodeReversalErr = "REV001"
 	CodeSettlement  = "STL001"
 	CodeCustomer    = "CUS001"
+	CodeAtmFault    = "ATM001"
+	CodeDisputedFee = "FEE001"
+	CodeVendorDrop  = "VND001"
+	CodeMismatch    = "MIS001"
+	CodeIncomplete  = "INC001"
 )
 
-var knownCodes = map[string]bool{CodeDuplicate: true, CodeNoCredit: true, CodeUnknown: true, CodeReversalErr: true, CodeSettlement: true, CodeCustomer: true}
+var knownCodes = map[string]bool{
+	CodeDuplicate:   true,
+	CodeNoCredit:    true,
+	CodeUnknown:     true,
+	CodeReversalErr: true,
+	CodeSettlement:  true,
+	CodeCustomer:    true,
+	CodeAtmFault:    true,
+	CodeDisputedFee: true,
+	CodeVendorDrop:  true,
+	CodeMismatch:    true,
+	CodeIncomplete:  true,
+}
 
 // Sources of a case.
 const (
@@ -206,11 +223,11 @@ func clockFor(code, rail string) string {
 	switch {
 	case code == CodeDuplicate:
 		return "WRONG_ACCOUNT_REQUEST"
-	case (code == CodeNoCredit || code == CodeUnknown || code == CodeCustomer) && rail == "NIP":
+	case (code == CodeNoCredit || code == CodeUnknown || code == CodeCustomer || code == CodeIncomplete) && (rail == "NIP" || rail == "INTERCHANGE"):
 		return "FAILED_INSTANT_TRANSFER"
-	case code == CodeNoCredit && rail == "ATM":
+	case (code == CodeNoCredit || code == CodeAtmFault) && rail == "ATM":
 		return "ATM_NOT_ON_US"
-	case code == CodeCustomer && (rail == "POS" || rail == "WEB" || rail == "CARD"):
+	case (code == CodeCustomer || code == CodeDisputedFee || code == CodeVendorDrop || code == CodeMismatch) && (rail == "POS" || rail == "WEB" || rail == "CARD" || rail == "MERCHANT"):
 		return "POS_WEB_DISPUTE"
 	}
 	return ""
@@ -220,10 +237,12 @@ func priorityFor(code, risk string) string {
 	switch {
 	case risk == "HIGH":
 		return "HIGH"
-	case code == CodeReversalErr || code == CodeSettlement:
+	case code == CodeReversalErr || code == CodeSettlement || code == CodeAtmFault || code == CodeMismatch:
 		return "HIGH"
-	case code == CodeNoCredit || code == CodeDuplicate:
+	case code == CodeNoCredit || code == CodeDuplicate || code == CodeIncomplete || code == CodeVendorDrop:
 		return "MEDIUM"
+	case code == CodeDisputedFee:
+		return "LOW"
 	}
 	return "MEDIUM"
 }
