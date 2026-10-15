@@ -355,3 +355,24 @@ func mustPub(t *testing.T) string {
 	}
 	return pub
 }
+
+func TestLoad(t *testing.T) {
+	priv, _, _ := GenerateKey()
+	if _, _, err := Load("k1", "", "", time.Minute); err == nil || !strings.Contains(err.Error(), "keygen") {
+		t.Errorf("missing key should say how to generate one, got %v", err)
+	}
+	s, v, err := Load("k1", priv, "", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _, _ := s.Issue(principal(), AudienceOps, time.Now())
+	if _, err := v.Verify(tok, AudienceOps); err != nil {
+		t.Errorf("issuer's own token rejected by its own verifier: %v", err)
+	}
+	if _, _, err := Load("k1", priv, "k1:"+mustPub(t), time.Minute); err == nil {
+		t.Error("a different key under the issuer's own kid was accepted")
+	}
+	if _, _, err := Load("k1", "###", "", time.Minute); err == nil {
+		t.Error("bad private key accepted")
+	}
+}

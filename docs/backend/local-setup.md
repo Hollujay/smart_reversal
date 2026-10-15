@@ -41,6 +41,16 @@ set -a; . ./.env; set +a
 
 Required: `DB_USER`, `DB_PASSWORD`, `DB_NAME`. The API also needs `JWT_PRIVATE_KEY` once token issuing is wired (see "Signing keys" below). The processes refuse to start without them and list every problem at once. The placeholder values in `.env.example` are accepted only when `ENVIRONMENT=development` or `test`. `FINANCIAL_EXECUTION_ENABLED` defaults to `false` and is refused in production.
 
+### Signing keys
+
+Tokens are signed with Ed25519. Generate a key for the API and put the private value in your shell or `.env`:
+
+```bash
+cd apps/api && go run ./cmd/keygen
+```
+
+`JWT_PRIVATE_KEY` belongs to the process that issues tokens (the API) only. Other processes verify with public keys and never need it. `JWT_KEY_ID` names the key. To rotate, give the new key a new id, keep the old public key in `JWT_PUBLIC_KEYS` as `kid:base64` until its tokens have expired (`JWT_TOKEN_TTL`, default 15 minutes), then remove it. Do not commit keys.
+
 ## 3. Migrate
 
 ```bash
