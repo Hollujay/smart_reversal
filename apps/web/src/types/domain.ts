@@ -9,7 +9,9 @@ export type Role =
   | 'ANALYST_MAKER'
   | 'SUPERVISOR_CHECKER'
   | 'AUDITOR'
-  | 'ADMIN';
+  | 'ADMIN'
+  | 'CONTACT_CENTRE_AGENT'
+  | 'BRANCH_AGENT';
 
 export type Channel = 'NIP' | 'POS' | 'CARD' | 'WEBHOOK' | 'DIRECT_DEBIT';
 
@@ -382,3 +384,90 @@ export interface ReconciliationSummary {
   reconciliationRate: number; // e.g. 98.4%
   status: 'COMPLETED' | 'IN_PROGRESS' | 'DISCREPANCY_FLAGGED';
 }
+
+export type AgentSearchIdentifierType = 'REFERENCE' | 'AMOUNT_DATE_CHANNEL' | 'CUSTOMER_TOKEN';
+
+export interface CustomerIntakeQuery {
+  queryType: AgentSearchIdentifierType;
+  reference?: string;
+  amount?: string;
+  date?: string;
+  channel?: Channel;
+  customerToken?: string; // Account number or phone
+}
+
+export type AgentResultState =
+  | 'MATCH_EXCEPTION'
+  | 'VERIFIED_SUCCESS'
+  | 'NO_MATCH'
+  | 'MULTIPLE_CANDIDATES';
+
+export interface AgentQueryResult {
+  state: AgentResultState;
+  query: CustomerIntakeQuery;
+  customerSafeStatusText: string;
+  approvedWording: string;
+  canQuoteRefund: boolean; // Strictly false unless verified resolved
+  expectedNextStep?: string;
+  timeEstimate?: string;
+  incidentBanner?: {
+    incidentId: string;
+    title: string;
+    severity: Severity;
+    eta: string;
+  };
+  evidenceSummary?: {
+    coreLedgerDebitRecorded: boolean;
+    counterpartyCreditConfirmed: boolean;
+    stan: string;
+    rrn: string;
+    sessionId?: string;
+    settledAt?: string;
+    beneficiaryBank: string;
+    beneficiaryAccount: string;
+    quotableSummary: string;
+  };
+  exception?: FinancialException;
+  investigationCase?: InvestigationCase;
+  transaction?: Transaction;
+  candidates?: Transaction[];
+  repeatContactCount: number;
+  isThresholdReached: boolean; // >= 3 repeat inquiries
+  isSourceStale: boolean;
+  sourceStaleMessage?: string;
+}
+
+export interface CustomerDisputeIntakePayload {
+  customerName: string;
+  customerPhone: string;
+  customerAccount: string;
+  channel: Channel;
+  amount: string;
+  currency: string;
+  transactionDate: string;
+  beneficiaryBank: string;
+  beneficiaryAccount?: string;
+  complaintText: string;
+  agentId: string;
+  agentRole: Role;
+  linkedIncidentId?: string;
+}
+
+export interface ReversalSafetyCheck {
+  id: string;
+  name: string;
+  description: string;
+  status: 'PASSED' | 'FAILED' | 'WARNING';
+  details: string;
+}
+
+export interface ReversalDetailRecord extends ReversalProposal {
+  exception?: FinancialException;
+  investigationCase?: InvestigationCase;
+  safetyChecks: ReversalSafetyCheck[];
+  allSafetyChecksPassed: boolean;
+  exposureAmount: string;
+  policyLimit: string;
+  isWithinPolicyLimit: boolean;
+}
+

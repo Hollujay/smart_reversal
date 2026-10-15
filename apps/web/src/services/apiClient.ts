@@ -13,6 +13,11 @@ import type {
   ExceptionNote,
   RootCause,
   ExternalDependency,
+  CustomerIntakeQuery,
+  AgentQueryResult,
+  CustomerDisputeIntakePayload,
+  ReversalDetailRecord,
+  ReversalSafetyCheck,
 } from '../types/domain';
 import {
   INITIAL_TRANSACTIONS,
@@ -628,6 +633,549 @@ export const apiClient = {
   // GET /reconciliation/runs
   async getReconciliationRuns(): Promise<ReconciliationSummary[]> {
     return [...reconciliationRuns];
+  },
+
+  // GET /reversals/:id (with 8 Safety Checks audit)
+  async getReversalDetail(reversalId: string): Promise<ReversalDetailRecord | null> {
+    const rev = reversals.find((r) => r.id === reversalId);
+    if (!rev) return null;
+
+    const exc = exceptions.find((e) => e.transactionId === rev.transactionId || e.reference === rev.reference);
+    const inv = investigations.find((i) => i.reference === rev.reference || i.exceptionId === exc?.id);
+
+    const safetyChecks: ReversalSafetyCheck[] = [
+      {
+        id: 's1-idempotency',
+        name: 'S1: Transactional Idempotency Key',
+        description: 'Verify cryptographic idempotency key exists and has not been settled.',
+        status: rev.idempotencyKey ? 'PASSED' : 'FAILED',
+        details: `Key: ${rev.idempotencyKey} (Verified unique across switch gateway)`,
+      },
+      {
+        id: 's2-no-prior-reversal',
+        name: 'S2: Duplicate Reversal Prevention',
+        description: 'Ensure no settled reversal already exists for this transaction.',
+        status: 'PASSED',
+        details: 'Switch journal queried: 0 prior reversal messages for this STAN/RRN.',
+      },
+      {
+        id: 's3-single-debit',
+        name: 'S3: Core Ledger Single Debit Verified',
+        description: 'Proof that funds were debited from originating customer account.',
+        status: 'PASSED',
+        details: `Account ${rev.destinationAccount} debited ₦${Number(rev.reversalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} on GL-1002.`,
+      },
+      {
+        id: 's4-non-credit',
+        name: 'S4: Counterparty Non-Credit Proof',
+        description: 'Confirmation from switch or counterparty that beneficiary was not credited.',
+        status: 'PASSED',
+        details: 'Switch responseCode 91 Destination Bank Unavailable. Session reconciliation confirmed non-credit.',
+      },
+      {
+        id: 's5-policy-limit',
+        name: 'S5: Dual-Control Policy Threshold',
+        description: 'Check whether reversal amount requires Level 2 or Level 3 Checker signoff.',
+        status: Number(rev.reversalAmount) <= 2000000 ? 'PASSED' : 'WARNING',
+        details: `Amount: ₦${Number(rev.reversalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} within Analyst Maker limit of ₦2,000,000.00.`,
+      },
+      {
+        id: 's6-separation-of-duties',
+        name: 'S6: Separation of Duties (Maker != Checker)',
+        description: 'Enforces that the authorizer cannot be the proposing maker.',
+        status: 'PASSED',
+        details: `Proposed by ${rev.proposedBy}. Requires Checker authorization from different operator.`,
+      },
+      {
+        id: 's7-kill-switch',
+        name: 'S7: Reversal Gateway Kill Switch Inactive',
+        description: 'Verify global reversal circuit breaker has not been tripped.',
+        status: inv?.killSwitchActive ? 'FAILED' : 'PASSED',
+        details: inv?.killSwitchActive ? 'BLOCKED: Gateway circuit breaker active.' : 'Switch bridge operational.',
+      },
+      {
+        id: 's8-evidence-freshness',
+        name: 'S8: Evidence Freshness Gate',
+        description: 'Ensure supporting evidence is not stale (> 2h old).',
+        status: 'PASSED',
+        details: 'Core reversal evidence verified fresh within 15m threshold. Dual-entry ledger records validated.',
+      },
+    ];
+
+    const allSafetyChecksPassed = safetyChecks.every((c) => c.status === 'PASSED');
+
+    return {
+      ...rev,
+      exception: exc,
+      investigationCase: inv,
+      safetyChecks,
+      allSafetyChecksPassed,
+      exposureAmount: rev.reversalAmount,
+      policyLimit: '2000000.00',
+      isWithinPolicyLimit: Number(rev.reversalAmount) <= 2000000,
+    };
+  },
+
+  // SEARCH Customer Query (First Contact Agent Intake)
+  async searchCustomerQuery(
+    query: CustomerIntakeQuery,
+    agentRole: Role
+  ): Promise<AgentQueryResult> {
+    // Record audit trail of search
+    auditTrail = [
+      {
+        id: `aud-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actorId: `agent-${agentRole.toLowerCase()}`,
+        actorRole: agentRole,
+        action: 'AGENT_CUSTOMER_QUERY_SEARCH',
+        entityType: 'TRANSACTION',
+        entityId: query.reference || query.customerToken || 'CRITERIA_SEARCH',
+        prevHash: auditTrail[0]?.entryHash || '0000',
+        entryHash: Math.random().toString(36).substring(2, 18),
+        details: { ...query },
+        ipAddress: '127.0.0.1',
+      },
+      ...auditTrail,
+    ];
+
+    const isSimulatedStale = Boolean(
+      query.reference?.toLowerCase().includes('stale') ||
+      query.customerToken?.toLowerCase().includes('stale')
+    );
+
+    // 1. REFERENCE SEARCH
+    if (query.queryType === 'REFERENCE' && query.reference) {
+      const cleanRef = query.reference.trim().toUpperCase();
+
+      // Case A: Matches active exception TXN-20261015-NIP-9901 or EXC-001 or RRN 9901847120 or STAN 009901
+      if (
+        cleanRef.includes('9901') ||
+        cleanRef === 'EXC-001' ||
+        cleanRef.includes('NIP-9901')
+      ) {
+        const exc = exceptions.find((e) => e.id === 'exc-001') || exceptions[0];
+        const inv = investigations.find((i) => i.id === 'inv-case-401') || investigations[0];
+        return {
+          state: 'MATCH_EXCEPTION',
+          query,
+          customerSafeStatusText: 'Transaction is undergoing automated settlement reconciliation with the receiving institution.',
+          expectedNextStep: 'Awaiting NIBSS settlement journal sync; automated resolution will be finalized.',
+          timeEstimate: 'Target resolution within 4 hours (CBN regulatory window: by 16-OCT-2026 11:10).',
+          incidentBanner: {
+            incidentId: 'INC-8821',
+            title: 'Intermittent NIBSS Outward Gateway timeout affecting NIP transfers',
+            severity: 'HIGH',
+            eta: 'Estimated recovery 15:30 today',
+          },
+          approvedWording:
+            'Thank you for contacting Wema Bank. Your transaction of ₦150,000.00 is currently undergoing counterparty settlement verification with the destination bank. Our automated reconciliation system is tracking session NIP9901 under case EXC-2026-001. If the recipient bank confirms non-credit, the funds will be automatically restored to your account within the regulatory window. We have linked this contact to your active case.',
+          canQuoteRefund: false, // Strict: NOT verified resolved
+          exception: exc,
+          investigationCase: inv,
+          repeatContactCount: exc.repeatContactCount || 1,
+          isThresholdReached: (exc.repeatContactCount || 1) >= 3,
+          isSourceStale: isSimulatedStale,
+          sourceStaleMessage: isSimulatedStale
+            ? '⚠️ Counterparty switch journal feed is 16m 40s behind live cutoff. Re-verifying...'
+            : undefined,
+        };
+      }
+
+      // Case B: Verified Successful Transaction (TXN-20261015-NIP-9902 or TX-NIP-9902)
+      if (cleanRef.includes('9902')) {
+        const txn = transactions.find((t) => t.id === 'tx-nip-9902') || transactions[1];
+        return {
+          state: 'VERIFIED_SUCCESS',
+          query,
+          customerSafeStatusText: 'Transaction verified successfully delivered and settled at destination institution.',
+          expectedNextStep: 'None required by bank. Recipient can confirm credit using the session ID provided.',
+          timeEstimate: 'Completed and settled on 15-OCT-2026 09:30:02.',
+          evidenceSummary: {
+            coreLedgerDebitRecorded: true,
+            counterpartyCreditConfirmed: true,
+            stan: '009902',
+            rrn: '9901847121',
+            sessionId: '99901426101509294288420',
+            settledAt: '2026-10-15T09:30:02.400Z',
+            beneficiaryBank: 'GTBank (058)',
+            beneficiaryAccount: '0144882190',
+            quotableSummary: 'Core ledger debited ₦45,000.00; GTBank confirmed credit acknowledgment at 09:30:02 via session 99901426101509294288420.',
+          },
+          approvedWording:
+            'Your transfer of ₦45,000.00 was successfully delivered to GTBank account 0144882190 on 15-OCT-2026. The beneficiary bank returned a successful credit confirmation message with Session ID 99901426101509294288420. The funds are resting with the receiving bank. Please provide this session ID to the beneficiary so their bank can confirm the deposit.',
+          canQuoteRefund: false,
+          transaction: txn,
+          repeatContactCount: 0,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      // Case C: Duplicate Debit Exception (TXN-20261015-CARD-7711 or 7711)
+      if (cleanRef.includes('7711')) {
+        const exc = exceptions.find((e) => e.classificationCode === 'DUP001') || exceptions[2];
+        const inv = investigations.find((i) => i.id === 'inv-case-403') || investigations[1];
+        return {
+          state: 'MATCH_EXCEPTION',
+          query,
+          customerSafeStatusText: 'Suspected duplicate charge flagged under active fast-track reversal review.',
+          expectedNextStep: 'Awaiting Supervisor authorization for automated reversal dispatch.',
+          timeEstimate: 'Target reversal turnaround under 1 hour.',
+          approvedWording:
+            'We have identified a suspected duplicate debit of ₦89,500.00 on card 5399••••7711 from POS Terminal TERM-8801. Our automated fraud engine has prepared a fast-track reversal under Case CASE-2026-403. A supervisor is currently performing the secondary authorization to credit your account today.',
+          canQuoteRefund: false,
+          exception: exc,
+          investigationCase: inv,
+          repeatContactCount: 2,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      // Case D: Verified Reversal Outcome (TXN-REVERSED-001 or resolved exception)
+      if (cleanRef.includes('REVERSED') || cleanRef.includes('RESOLVED')) {
+        return {
+          state: 'VERIFIED_SUCCESS',
+          query,
+          customerSafeStatusText: 'Reversal verified completed. Funds returned to originating account.',
+          timeEstimate: 'Credited on 15-OCT-2026.',
+          evidenceSummary: {
+            coreLedgerDebitRecorded: true,
+            counterpartyCreditConfirmed: false,
+            stan: '009955',
+            rrn: '9901847999',
+            beneficiaryBank: 'Wema Bank PLC',
+            beneficiaryAccount: '0123456789',
+            quotableSummary: 'Core ledger refund credit entry GL-1002 posted and verified.',
+          },
+          approvedWording:
+            'Good news: your transaction was investigated and the reversal of ₦150,000.00 has been verified completed. The funds have been credited back to your account 0123456789. You may check your updated available balance.',
+          canQuoteRefund: true, // Only true when outcome is VERIFIED reversed!
+          repeatContactCount: 1,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      // Default: No Match
+      return {
+        state: 'NO_MATCH',
+        query,
+        customerSafeStatusText: 'No matching transaction record found in active journals or settlement files.',
+        approvedWording:
+          'We were unable to locate an active record matching reference ' +
+          cleanRef +
+          ' in our switch or ledger journals. I will file a formal customer inquiry docket now so our central reconciliation team can trace it across archives.',
+        canQuoteRefund: false,
+        repeatContactCount: 0,
+        isThresholdReached: false,
+        isSourceStale: isSimulatedStale,
+      };
+    }
+
+    // 2. AMOUNT + DATE + CHANNEL SEARCH
+    if (query.queryType === 'AMOUNT_DATE_CHANNEL') {
+      const amt = query.amount ? parseFloat(query.amount.replace(/[^0-9.]/g, '')) : 0;
+      if (amt === 45000 && (!query.channel || query.channel === 'POS')) {
+        const matchedTxns = transactions.filter((t) => t.amount === '45000.00' || t.amount === '45000');
+        const candidate2: Transaction = {
+          id: 'tx-pos-8802',
+          reference: 'TXN-20261015-POS-8802',
+          rrn: '4402881999',
+          stan: '004403',
+          amount: '45000.00',
+          currency: 'NGN',
+          channel: 'POS',
+          status: 'failed',
+          senderAccount: '0144882190',
+          beneficiaryAccount: '9833214092',
+          senderBank: 'Wema Bank PLC',
+          beneficiaryBank: 'GTBank PLC',
+          createdAt: '2026-10-15T14:22:10Z',
+          hasDiscrepancy: true,
+          exceptionType: 'STATUS_MISMATCH',
+          modelConfidence: 91,
+          isVerified: false,
+          maskedPan: '5061 •••• •••• 8801',
+        };
+        const candidates = matchedTxns.length >= 2 ? matchedTxns : [matchedTxns[0] || transactions[0], candidate2];
+        return {
+          state: 'MULTIPLE_CANDIDATES',
+          query,
+          customerSafeStatusText: 'Multiple matching transactions detected. Disambiguation required.',
+          approvedWording:
+            'We found 2 distinct transactions for ₦45,000.00 on that date. To confirm which transaction you are inquiring about, could you confirm the approximate time or the merchant terminal location?',
+          canQuoteRefund: false,
+          candidates,
+          repeatContactCount: 0,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      if (amt === 150000 && (!query.channel || query.channel === 'NIP')) {
+        const exc = exceptions[0];
+        const inv = investigations[0];
+        return {
+          state: 'MATCH_EXCEPTION',
+          query,
+          customerSafeStatusText: 'Single match found with active reconciliation exception.',
+          expectedNextStep: 'Awaiting NIBSS settlement sync.',
+          timeEstimate: 'Target resolution within 4 hours.',
+          approvedWording:
+            'We located your NIP transfer for ₦150,000.00. It is currently being reconciled with the receiving institution under case ' +
+            exc.reference +
+            '. No refund is confirmed yet, but our automated recon will credit you if non-delivery is finalized.',
+          canQuoteRefund: false,
+          exception: exc,
+          investigationCase: inv,
+          repeatContactCount: exc.repeatContactCount || 1,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      return {
+        state: 'NO_MATCH',
+        query,
+        customerSafeStatusText: 'No matching transaction found for the specified amount, date, and channel.',
+        approvedWording:
+          'No transaction matches those exact criteria in our active journals. Let me take down your details to file an official tracing request.',
+        canQuoteRefund: false,
+        repeatContactCount: 0,
+        isThresholdReached: false,
+        isSourceStale: isSimulatedStale,
+      };
+    }
+
+    // 3. CUSTOMER TOKEN SEARCH (Account or Phone)
+    if (query.queryType === 'CUSTOMER_TOKEN' && query.customerToken) {
+      const cleanToken = query.customerToken.trim();
+      const digitsOnly = cleanToken.replace(/[^0-9]/g, '');
+
+      // Check high repeat inquiry customer
+      if (
+        digitsOnly.includes('8091112233') ||
+        digitsOnly.includes('1112233') ||
+        digitsOnly.includes('0166554433') ||
+        digitsOnly.includes('0188990011') ||
+        cleanToken.includes('1112233')
+      ) {
+        const exc = exceptions.find((e) => e.customerPhone?.includes('111') || e.repeatContactCount >= 3) || exceptions[4];
+        const inv = investigations.find((i) => i.id === 'inv-case-405') || investigations[2];
+        return {
+          state: 'MATCH_EXCEPTION',
+          query,
+          customerSafeStatusText: 'Critical priority customer dispute logged with 3 previous repeat contacts.',
+          expectedNextStep: 'Escalated to Tier-2 Supervisor Queue for accelerated manual clearance.',
+          timeEstimate: 'Escalated priority: immediate review by Supervisor Folake Balogun.',
+          incidentBanner: {
+            incidentId: 'INC-9014',
+            title: 'Multiple failed reversals on customer account pending supervisor override',
+            severity: 'CRITICAL',
+            eta: 'Priority handling active',
+          },
+          approvedWording:
+            'Thank you for following up with us. We deeply understand this is your 3rd inquiry regarding your debit. Because this matter has reached our priority repeat threshold, your case CASE-2026-405 has been marked CRITICAL and routed directly to our Tier-2 Supervisor desk for resolution today.',
+          canQuoteRefund: false,
+          exception: exc,
+          investigationCase: inv,
+          repeatContactCount: 3,
+          isThresholdReached: true, // Threshold reached: enables supervisor escalation
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      if (cleanToken.includes('0123456789')) {
+        const exc = exceptions[0];
+        const inv = investigations[0];
+        return {
+          state: 'MATCH_EXCEPTION',
+          query,
+          customerSafeStatusText: 'Active exception found on customer account 0123456789.',
+          expectedNextStep: 'Settlement confirmation in progress.',
+          timeEstimate: 'Within CBN 72h window.',
+          approvedWording:
+            'We have located your pending transaction under account 0123456789. Our team is actively investigating the switch receipt.',
+          canQuoteRefund: false,
+          exception: exc,
+          investigationCase: inv,
+          repeatContactCount: 1,
+          isThresholdReached: false,
+          isSourceStale: isSimulatedStale,
+        };
+      }
+
+      return {
+        state: 'NO_MATCH',
+        query,
+        customerSafeStatusText: 'No active exception or transaction found for this customer account/phone.',
+        approvedWording:
+          'We do not have an active transaction or dispute logged under that account or phone number. Let me open a complaint ticket for you.',
+        canQuoteRefund: false,
+        repeatContactCount: 0,
+        isThresholdReached: false,
+        isSourceStale: isSimulatedStale,
+      };
+    }
+
+    return {
+      state: 'NO_MATCH',
+      query,
+      customerSafeStatusText: 'Enter search criteria above to begin.',
+      approvedWording: 'Please specify transaction reference, amount, or customer identifier.',
+      canQuoteRefund: false,
+      repeatContactCount: 0,
+      isThresholdReached: false,
+      isSourceStale: false,
+    };
+  },
+
+  // LOG Agent Contact & Optional Supervisor Escalation
+  async logAgentContact(
+    exceptionIdOrRef: string,
+    customerPhone: string,
+    notes: string,
+    escalated: boolean,
+    agentName: string = 'Chioma Nwosu (Contact Centre)'
+  ): Promise<FinancialException | null> {
+    const exc = exceptions.find(
+      (e) => e.id === exceptionIdOrRef || e.reference === exceptionIdOrRef
+    );
+    if (!exc) return null;
+
+    const newRepeatCount = (exc.repeatContactCount || 0) + 1;
+    const newNote: ExceptionNote = {
+      id: `note-cc-${Date.now()}`,
+      author: agentName,
+      authorRole: 'CONTACT_CENTRE_AGENT',
+      timestamp: new Date().toISOString(),
+      text: `Customer call logged [Phone: ${customerPhone}]: ${notes} ${
+        escalated ? '🚨 ESCALATED TO SUPERVISOR' : ''
+      }`,
+    };
+
+    const updated: FinancialException = {
+      ...exc,
+      repeatContactCount: newRepeatCount,
+      notes: [...exc.notes, newNote],
+      lane: escalated ? 'SUPERVISOR_QUEUE' : exc.lane,
+      severity: escalated ? 'CRITICAL' : exc.severity,
+      version: exc.version + 1,
+    };
+
+    exceptions = exceptions.map((e) => (e.id === exc.id ? updated : e));
+
+    auditTrail = [
+      {
+        id: `aud-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actorId: agentName,
+        actorRole: 'CONTACT_CENTRE_AGENT',
+        action: escalated ? 'SUPERVISOR_ESCALATION_TRIGGERED' : 'CUSTOMER_CONTACT_LOGGED',
+        entityType: 'INVESTIGATION',
+        entityId: exc.id,
+        prevHash: auditTrail[0]?.entryHash || '0000',
+        entryHash: Math.random().toString(36).substring(2, 18),
+        details: { customerPhone, newRepeatCount, escalated, notes },
+        ipAddress: '127.0.0.1',
+      },
+      ...auditTrail,
+    ];
+
+    return updated;
+  },
+
+  // CREATE Customer-Reported Case (Intake Form)
+  async createCustomerReportedIntake(
+    payload: CustomerDisputeIntakePayload
+  ): Promise<{ exception: FinancialException; caseNumber: string }> {
+    const id = `exc-cus-${Date.now().toString().slice(-4)}`;
+    const caseNumber = `CASE-CUS-${Math.floor(1000 + Math.random() * 9000)}`;
+    const reference = `TXN-CUS-${Date.now().toString().slice(-8)}`;
+
+    const newException: FinancialException = {
+      id,
+      transactionId: `tx-cus-${Date.now().toString().slice(-6)}`,
+      reference,
+      type: 'DEBIT_WITHOUT_CREDIT',
+      classificationCode: 'CUS001',
+      source: 'CUSTOMER',
+      rootCause: 'SWITCH_TIMEOUT',
+      severity: 'HIGH',
+      amount: payload.amount,
+      currency: payload.currency || 'NGN',
+      exposure: payload.amount,
+      exposureType: 'CUSTOMER_DISPUTE',
+      channel: payload.channel,
+      status: 'detected',
+      lane: 'MANUAL_INVESTIGATION',
+      description: payload.complaintText,
+      detectedAt: new Date().toISOString(),
+      debitTimestamp: payload.transactionDate || new Date().toISOString(),
+      internalSlaTarget: new Date(Date.now() + 4 * 3600000).toISOString(),
+      regulatoryDeadline: new Date(Date.now() + 72 * 3600000).toISOString(),
+      slaStatus: 'ON_TRACK',
+      modelConfidence: 85,
+      modelExplanation: 'Customer intake filed at branch/contact-centre. Scheduled for automated switch log matching.',
+      priorityScore: 78,
+      priorityFactors: {
+        amountWeight: 20,
+        slaWeight: 20,
+        customerWeight: 25,
+        anomalyWeight: 13,
+        rationale: 'Customer direct intake requires 4h first acknowledgment SLA under CBN guidelines.',
+      },
+      team: 'DISPUTE_RESOLUTION',
+      sourceFreshness: 'Live (Agent Intake)',
+      sourceFreshnessState: 'LIVE',
+      repeatContactCount: 1,
+      version: 1,
+      customerName: payload.customerName,
+      customerPhone: payload.customerPhone,
+      accountNumber: payload.customerAccount,
+      notes: [
+        {
+          id: `note-${Date.now()}`,
+          author: payload.agentId,
+          authorRole: payload.agentRole,
+          timestamp: new Date().toISOString(),
+          text: `Intake ticket opened by ${payload.agentId} (${payload.agentRole}): ${payload.complaintText}`,
+        },
+      ],
+      stateHistory: [
+        {
+          from: 'detected',
+          to: 'detected',
+          reasonCode: 'CUSTOMER_DISPUTE_FILED',
+          author: payload.agentId,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+
+    exceptions = [newException, ...exceptions];
+
+    // Audit Trail
+    auditTrail = [
+      {
+        id: `aud-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actorId: payload.agentId,
+        actorRole: payload.agentRole,
+        action: 'CUSTOMER_DISPUTE_FILED_BY_AGENT',
+        entityType: 'INVESTIGATION',
+        entityId: newException.id,
+        prevHash: auditTrail[0]?.entryHash || '0000',
+        entryHash: Math.random().toString(36).substring(2, 18),
+        details: { caseNumber, ...payload },
+        ipAddress: '127.0.0.1',
+      },
+      ...auditTrail,
+    ];
+
+    return { exception: newException, caseNumber };
   },
 
   // Log Sensitive Data Reveal (Mandatory Audit Trail)

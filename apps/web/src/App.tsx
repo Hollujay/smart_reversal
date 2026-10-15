@@ -9,6 +9,7 @@ import { InvestigationsView } from './features/InvestigationsView';
 import { ReversalsView } from './features/ReversalsView';
 import { AuditView } from './features/AuditView';
 import { StorybookView } from './features/StorybookView';
+import { AgentIntakeView } from './features/AgentIntakeView';
 
 const MainViewRouter: React.FC = () => {
   const { activeView } = useApp();
@@ -16,6 +17,8 @@ const MainViewRouter: React.FC = () => {
   switch (activeView) {
     case 'dashboard':
       return <DashboardView />;
+    case 'agent-intake':
+      return <AgentIntakeView />;
     case 'transactions':
       return <TransactionsView />;
     case 'reconciliation':
