@@ -13,7 +13,7 @@ export type Role =
   | 'CONTACT_CENTRE_AGENT'
   | 'BRANCH_AGENT';
 
-export type Channel = 'NIP' | 'POS' | 'CARD' | 'WEBHOOK' | 'DIRECT_DEBIT';
+export type Channel = 'NIP' | 'POS' | 'CARD' | 'ATM' | 'WEB' | 'WEBHOOK' | 'DIRECT_DEBIT';
 
 export type FinancialStatus =
   | 'detected'
