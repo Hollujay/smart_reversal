@@ -1,0 +1,20 @@
+# Gitleaks configuration. The default rules apply. The allowlist below covers
+# findings reviewed on 2026-10-15 and judged false positives. Do not widen it
+# to whole directories; add one file with a reason.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake signing and config secrets used only inside Go unit tests"
+targetRules = ["generic-api-key"]
+paths = [
+  '''apps/api/internal/auth/token_test\.go''',
+  '''apps/api/internal/config/config_test\.go''',
+]
+
+[[allowlists]]
+description = "Mock idempotency keys in the synthetic simulator data of the web app"
+targetRules = ["generic-api-key"]
+paths = [
+  '''apps/web/src/services/mockSimulatorData\.ts''',
+]
