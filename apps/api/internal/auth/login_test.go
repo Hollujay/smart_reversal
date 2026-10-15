@@ -8,7 +8,10 @@ import (
 )
 
 func TestHandleLoginIsDisabled(t *testing.T) {
-	svc := NewAuthService("a-test-secret-that-is-long-enough-0123456789")
+	svc, err := NewAuthService("a-test-secret-that-is-long-enough-0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		name string

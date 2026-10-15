@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,14 +31,25 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+const (
+	// MinSecretLength is the shortest HMAC signing secret accepted. Shorter
+	// secrets are rejected at construction so a blank or placeholder value
+	// cannot produce tokens that validate.
+	MinSecretLength = 32
+
+	tokenIssuer = "smartreversal-api"
+)
+
 type AuthService struct {
 	secretKey []byte
 }
 
-func NewAuthService(secret string) *AuthService {
-	return &AuthService{
-		secretKey: []byte(secret),
+// NewAuthService returns an AuthService, or an error if the secret is too short.
+func NewAuthService(secret string) (*AuthService, error) {
+	if len(secret) < MinSecretLength {
+		return nil, fmt.Errorf("auth: signing secret must be at least %d bytes", MinSecretLength)
 	}
+	return &AuthService{secretKey: []byte(secret)}, nil
 }
 
 type LoginRequest struct {
@@ -61,7 +73,7 @@ func (s *AuthService) GenerateToken(userID, email string, role Role, duration ti
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "smartreversal-api",
+			Issuer:    tokenIssuer,
 		},
 	}
 
@@ -72,11 +84,12 @@ func (s *AuthService) GenerateToken(userID, email string, role Role, duration ti
 // ValidateToken verifies and extracts claims from a raw bearer token.
 func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
 		return s.secretKey, nil
-	})
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuer(tokenIssuer),
+	)
 
 	if err != nil {
 		return nil, err
