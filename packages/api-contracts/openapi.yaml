@@ -531,6 +531,72 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/calendar/add-working-days:
+    get:
+      tags: [Governance]
+      operationId: addWorkingDays
+      summary: A moment a number of working days later
+      description: |
+        Weekends and the institution's approved holidays are skipped, in the
+        institution's time zone (WAT). The start date is day 0 whether or not it
+        is a business day. This counting convention is an assumption to confirm
+        with Compliance. Open to any signed-in operator.
+      x-status: implemented
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: days, in: query, required: true, schema: { type: integer, minimum: 0, maximum: 3650 } }
+      responses:
+        '200':
+          description: The resulting time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarAdd' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/calendar/business-time:
+    get:
+      tags: [Governance]
+      operationId: businessTime
+      summary: Business time elapsed between two moments
+      description: Counts only time that falls on business days. `to` defaults to now.
+      x-status: implemented
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Elapsed business time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarBusinessTime' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/calendar/next-cutoff:
+    get:
+      tags: [Governance]
+      operationId: nextCutoff
+      summary: Next cut-off and settlement date for a rail
+      description: |
+        A rail with no approved cut-off and settlement lag returns 422
+        `NOT_CONFIGURED`. No cut-off is assumed.
+      x-status: implemented
+      parameters:
+        - { name: rail, in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Cut-off and settlement date.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarCutoff' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/killswitch:
     post:
       tags: [Governance]
@@ -780,6 +846,32 @@ components:
       properties:
         decision: { type: string, enum: [approved, rejected] }
         reason: { type: string }
+    CalendarAdd:
+      type: object
+      required: [from, days, result, time_zone]
+      properties:
+        from: { type: string, format: date-time }
+        days: { type: integer }
+        result: { type: string, format: date-time }
+        time_zone: { type: string, example: Africa/Lagos }
+    CalendarBusinessTime:
+      type: object
+      required: [from, to, elapsed_business_seconds, working_days, time_zone]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        elapsed_business_seconds: { type: integer, format: int64 }
+        working_days: { type: integer }
+        time_zone: { type: string }
+    CalendarCutoff:
+      type: object
+      required: [rail, from, next_cutoff, settlement_date, time_zone]
+      properties:
+        rail: { type: string }
+        from: { type: string, format: date-time }
+        next_cutoff: { type: string, format: date-time }
+        settlement_date: { type: string, format: date }
+        time_zone: { type: string }
     UnmaskRequest:
       type: object
       required: [token, reason]

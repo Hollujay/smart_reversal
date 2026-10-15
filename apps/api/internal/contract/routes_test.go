@@ -94,7 +94,7 @@ func TestNoPlannedOperationIsAlreadyServed(t *testing.T) {
 // Guards against the comparisons above passing because both sides are empty.
 func TestRouteDiscoveryFindsKnownRoutes(t *testing.T) {
 	served := routerOperations(t)
-	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask", "GET /v1/config/{key}", "POST /v1/config/{key}/versions/{version}/decision"} {
+	for _, want := range []string{"GET /v1/health", "GET /v1/ready", "POST /v1/auth/login", "GET /v1/me", "GET /v1/audit", "POST /v1/accounts/unmask", "GET /v1/config/{key}", "POST /v1/config/{key}/versions/{version}/decision", "GET /v1/calendar/next-cutoff"} {
 		if !served[want] {
 			t.Errorf("route discovery did not find %s; found %v", want, served)
 		}
