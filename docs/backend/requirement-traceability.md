@@ -134,4 +134,26 @@ Source: v2 Shared Preamble rules 1 to 11 and brief section 5. Each needs a named
 | Phase | Status |
 |---|---|
 | B0 | Code delivered on `feat/backend-b0-foundation`, awaiting review. Exit gate assessed in `b0-report.md`: met for everything that was run, with listed exceptions |
-| B1 to B11 | Not started |
+| B1 | Code delivered on `feat/backend-b1-governance`, awaiting review. See section 9 and `b1-report.md` |
+| B2 to B11 | Not started |
+
+## 9. B1 status against the v2 prompt B1
+
+| v2 B1 item | Status | Notes |
+|---|---|---|
+| 1 Multi-tenancy, row-level security, cross-tenant tests | Done | `sr_app` role, policies on every tenant table, tests for read, write, move, leak, and for each later feature |
+| 2 JWT validation, session timeout, MFA claim, service-to-service auth | Done, with a gap | EdDSA key sets with rotation; 15 minute tokens; MFA enforced as a claim; signed service assertions with replay protection. **No mechanism issues MFA (D20)**. "OIDC/SAML-ready" means external issuers can be added as key-set entries; no OIDC or SAML client is built |
+| 3 RBAC plus attribute rules, matrix as data, maker-checker, conflict check | Done | 99 cells checked against an independent copy of the v2 table. Limits come from configuration, and none is configured |
+| 4 Tokenisation, masking, reason-gated unmask with rate limit | Done, with a gap | Masking applies to logs. No response serialisers exist yet, so response masking arrives with the first data routes |
+| 5 Audit: append-only, hash chain, verify, audit of sensitive reads, time discipline | Done, with a gap | Out-of-database anchoring of the chain head is not built. Time comes from one appender clock, truncated to microseconds |
+| 6 Config service: versioned, maker-checker, source, effective date, verify status | Done | Integer keys and structured regulatory clocks. No values are built in |
+| 7 Business calendar: holidays, weekends, cut-offs, elapsed business time, next cut-off | Done | Holidays and cut-offs are configuration. None is seeded because no source was supplied (assumption A6) |
+| 8 Kill switch: four scopes, dual control to re-enable, consumers check first | Done | `Check` fails closed. No consumer exists yet, so B5 must call it |
+| 9 Delegation and on-call | Service layer only | No HTTP routes. Routes work, never lends authority |
+| Regulatory clock registry seeded with the 5.3 values and statuses | Done | Seven candidate clocks proposed as pending, with the pack's statuses. None is approved |
+| FR-37 decision log | Done | Hash-chained, in the same transaction as the decision |
+| FR-39 editable rules, versioned, audited, maker-checker | Done | Integers and clocks |
+| FR-40 RBAC | Done | |
+| FR-41 customer authentication | Partial | Separate audience and verification only. Customer login and tables are B10 |
+
+B1 exit requirement: "no endpoint is reachable without auth and authorisation tests; tamper of any audit row is detected by verify-chain". Met for every route that exists, enforced by a test that walks the router and fails if a non-public route answers without a token. Eleven kinds of tampering are detected in tests.
