@@ -65,7 +65,6 @@ services:
       DB_SSLMODE: disable
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-super_secret_dev_key_change_in_production_32char_minimum}
       FINANCIAL_EXECUTION_ENABLED: "false"
 
   api:
@@ -81,6 +80,11 @@ services:
     environment:
       <<: *backend-env
       API_PORT: 8080
+      # Generate with: cd apps/api && go run ./cmd/keygen
+      JWT_KEY_ID: ${JWT_KEY_ID:-k1}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEYS: ${JWT_PUBLIC_KEYS:-}
+      JWT_TOKEN_TTL: ${JWT_TOKEN_TTL:-15m}
     ports:
       - "${API_PORT:-8080}:8080"
     healthcheck:

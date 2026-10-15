@@ -39,7 +39,7 @@ cp .env.example .env        # edit ports if needed
 set -a; . ./.env; set +a
 ```
 
-Required: `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET` (at least 32 bytes). The processes refuse to start without them and list every problem at once. The placeholder values in `.env.example` are accepted only when `ENVIRONMENT=development` or `test`. `FINANCIAL_EXECUTION_ENABLED` defaults to `false` and is refused in production.
+Required: `DB_USER`, `DB_PASSWORD`, `DB_NAME`. The API also needs `JWT_PRIVATE_KEY` once token issuing is wired (see "Signing keys" below). The processes refuse to start without them and list every problem at once. The placeholder values in `.env.example` are accepted only when `ENVIRONMENT=development` or `test`. `FINANCIAL_EXECUTION_ENABLED` defaults to `false` and is refused in production.
 
 ## 3. Migrate
 

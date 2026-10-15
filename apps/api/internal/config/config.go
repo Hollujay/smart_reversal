@@ -19,12 +19,9 @@ const (
 	EnvProduction  = "production"
 )
 
-const minJWTSecretLength = 32
-
 // placeholderSecrets are values shipped in .env.example. They are acceptable
 // for local development only.
 var placeholderSecrets = []string{
-	"super_secret_dev_key_change_in_production_32char_minimum",
 	"development_secret_only",
 }
 
@@ -54,7 +51,16 @@ type Config struct {
 	RedisPassword string
 	RedisDB       int
 
-	JWTSecret    string
+	// JWTKeyID names the signing key. JWTPrivateKey is the base64 Ed25519 seed
+	// or private key of the issuing process, and JWTPublicKeys lists extra
+	// verification keys as "kid:base64,kid:base64". All are optional here and
+	// checked by the identity package in the processes that need them, so the
+	// migrate and worker commands do not need a signing key.
+	JWTKeyID      string
+	JWTPrivateKey string
+	JWTPublicKeys string
+	JWTTokenTTL   time.Duration
+
 	AIServiceURL string
 
 	WorkerHealthPort   int
@@ -96,7 +102,10 @@ func LoadFrom(lookup func(string) (string, bool)) (*Config, error) {
 		RedisPort:         l.port("REDIS_PORT", 6379),
 		RedisPassword:     l.str("REDIS_PASSWORD", ""),
 		RedisDB:           l.nonNegInt("REDIS_DB", 0),
-		JWTSecret:         l.required("JWT_SECRET"),
+		JWTKeyID:          l.str("JWT_KEY_ID", "k1"),
+		JWTPrivateKey:     l.str("JWT_PRIVATE_KEY", ""),
+		JWTPublicKeys:     l.str("JWT_PUBLIC_KEYS", ""),
+		JWTTokenTTL:       l.duration("JWT_TOKEN_TTL", 15*time.Minute),
 		AIServiceURL:      l.str("AI_SERVICE_URL", "http://localhost:8000"),
 
 		WorkerHealthPort:   l.port("WORKER_HEALTH_PORT", 8081),
@@ -127,14 +136,10 @@ func (c *Config) validate(l *loader) {
 		l.errs = append(l.errs, fmt.Errorf("LOG_LEVEL %q is not one of debug, info, warn, error", c.LogLevel))
 	}
 
-	if c.JWTSecret != "" && len(c.JWTSecret) < minJWTSecretLength {
-		l.errs = append(l.errs, fmt.Errorf("JWT_SECRET must be at least %d bytes", minJWTSecretLength))
-	}
-
 	if c.Environment == EnvStaging || c.Environment == EnvProduction {
 		for _, p := range placeholderSecrets {
-			if c.JWTSecret == p || c.DBPassword == p {
-				l.errs = append(l.errs, fmt.Errorf("a placeholder secret from .env.example is not allowed in %s", c.Environment))
+			if c.DBPassword == p {
+				l.errs = append(l.errs, fmt.Errorf("the placeholder database password from .env.example is not allowed in %s", c.Environment))
 				break
 			}
 		}
