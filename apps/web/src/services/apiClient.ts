@@ -11,6 +11,8 @@ import type {
   Role,
   ExceptionTeam,
   ExceptionNote,
+  RootCause,
+  ExternalDependency,
 } from '../types/domain';
 import {
   INITIAL_TRANSACTIONS,
@@ -306,6 +308,207 @@ export const apiClient = {
   // GET /investigations
   async getInvestigations(): Promise<InvestigationCase[]> {
     return [...investigations];
+  },
+
+  async getInvestigationCases(): Promise<InvestigationCase[]> {
+    return this.getInvestigations();
+  },
+
+  // GET /investigations/:id
+  async getInvestigationCase(id: string): Promise<InvestigationCase | null> {
+    const found = investigations.find((c) => c.id === id || c.caseNumber === id || c.exceptionId === id);
+    return found ? { ...found } : null;
+  },
+
+  // CONFIRM / EDIT Root Cause Tag
+  async confirmRootCause(
+    caseId: string,
+    confirmedCause: RootCause,
+    analyst: string = 'Olusola Adeyemi (Maker)'
+  ): Promise<InvestigationCase> {
+    const c = investigations.find((x) => x.id === caseId);
+    if (!c) throw new Error('Case not found');
+
+    const updated: InvestigationCase = {
+      ...c,
+      confirmedRootCause: confirmedCause,
+      isRootCauseConfirmed: true,
+      updatedAt: new Date().toISOString(),
+      timeline: [
+        ...c.timeline,
+        {
+          id: `tl-rc-${Date.now()}`,
+          source: 'OPS',
+          sourceName: 'Analyst Case Triage',
+          sourceTimestamp: new Date().toISOString(),
+          receivedTimestamp: new Date().toISOString(),
+          clockSkewMs: 0,
+          isLateArriving: false,
+          title: `Root Cause Confirmed: ${confirmedCause}`,
+          description: `Analyst ${analyst} confirmed root-cause diagnosis.`,
+          payload: { confirmedCause, analyst },
+          severity: 'SUCCESS',
+        },
+      ],
+    };
+
+    investigations = investigations.map((x) => (x.id === caseId ? updated : x));
+    return updated;
+  },
+
+  // CONFIRM Duplicate Verdict
+  async confirmDuplicateVerdict(
+    caseId: string,
+    verdict: 'CONFIRMED_DUPLICATE' | 'LEGITIMATE_RETRY',
+    reason: string,
+    analyst: string = 'Olusola Adeyemi (Maker)'
+  ): Promise<InvestigationCase> {
+    const c = investigations.find((x) => x.id === caseId);
+    if (!c) throw new Error('Case not found');
+
+    const updated: InvestigationCase = {
+      ...c,
+      status: verdict === 'CONFIRMED_DUPLICATE' ? 'approval' : 'resolved',
+      duplicateComparison: c.duplicateComparison
+        ? {
+            ...c.duplicateComparison,
+            ruleOutcome: verdict,
+            verdictReason: reason,
+          }
+        : undefined,
+      updatedAt: new Date().toISOString(),
+      timeline: [
+        ...c.timeline,
+        {
+          id: `tl-dup-${Date.now()}`,
+          source: 'OPS',
+          sourceName: 'Duplicate Decision Engine',
+          sourceTimestamp: new Date().toISOString(),
+          receivedTimestamp: new Date().toISOString(),
+          clockSkewMs: 0,
+          isLateArriving: false,
+          title: `Duplicate Verdict: ${verdict}`,
+          description: `Analyst ${analyst}: ${reason}`,
+          payload: { verdict, reason, analyst },
+          severity: verdict === 'CONFIRMED_DUPLICATE' ? 'WARNING' : 'SUCCESS',
+        },
+      ],
+    };
+
+    investigations = investigations.map((x) => (x.id === caseId ? updated : x));
+    return updated;
+  },
+
+  // REQUEST Missing Evidence Check
+  async requestMissingEvidenceCheck(
+    caseId: string,
+    evidenceId: string,
+    targetSource: string,
+    analyst: string = 'Olusola Adeyemi (Maker)'
+  ): Promise<InvestigationCase> {
+    const c = investigations.find((x) => x.id === caseId);
+    if (!c) throw new Error('Case not found');
+
+    const updatedEvidence = c.evidence.map((ev) =>
+      ev.id === evidenceId
+        ? {
+            ...ev,
+            freshness: 'FRESH' as const,
+            freshnessLabel: 'Verification In-Flight',
+            details: `${ev.details} [Check DISPATCHED to ${targetSource} by ${analyst}]`,
+          }
+        : ev
+    );
+
+    const updated: InvestigationCase = {
+      ...c,
+      evidence: updatedEvidence,
+      updatedAt: new Date().toISOString(),
+      timeline: [
+        ...c.timeline,
+        {
+          id: `tl-ev-req-${Date.now()}`,
+          source: 'OPS',
+          sourceName: 'Counterparty Inquiry Service',
+          sourceTimestamp: new Date().toISOString(),
+          receivedTimestamp: new Date().toISOString(),
+          clockSkewMs: 0,
+          isLateArriving: false,
+          title: `Evidence Check Dispatched to ${targetSource}`,
+          description: `Automated query queued for missing counterparty leg (${evidenceId}).`,
+          payload: { evidenceId, targetSource, analyst },
+          severity: 'INFO',
+        },
+      ],
+    };
+
+    investigations = investigations.map((x) => (x.id === caseId ? updated : x));
+    return updated;
+  },
+
+  // ADD External Dependency
+  async addExternalDependency(
+    caseId: string,
+    dep: Omit<ExternalDependency, 'id'>
+  ): Promise<InvestigationCase> {
+    const c = investigations.find((x) => x.id === caseId);
+    if (!c) throw new Error('Case not found');
+
+    const newDep: ExternalDependency = {
+      ...dep,
+      id: `dep-${Date.now()}`,
+      status: dep.status || 'PENDING',
+    };
+
+    const updated: InvestigationCase = {
+      ...c,
+      externalDependencies: [...c.externalDependencies, newDep],
+      updatedAt: new Date().toISOString(),
+    };
+
+    investigations = investigations.map((x) => (x.id === caseId ? updated : x));
+    return updated;
+  },
+
+  // CLOSE Investigation Case
+  async closeInvestigationCase(
+    caseId: string,
+    resolutionCode: string,
+    notes: string,
+    analyst: string = 'Olusola Adeyemi (Maker)'
+  ): Promise<InvestigationCase> {
+    const c = investigations.find((x) => x.id === caseId);
+    if (!c) throw new Error('Case not found');
+
+    const updated: InvestigationCase = {
+      ...c,
+      status: 'resolved',
+      exception: {
+        ...c.exception,
+        status: 'resolved',
+        resolutionCode,
+      },
+      updatedAt: new Date().toISOString(),
+      timeline: [
+        ...c.timeline,
+        {
+          id: `tl-close-${Date.now()}`,
+          source: 'OPS',
+          sourceName: 'Case Resolution Terminal',
+          sourceTimestamp: new Date().toISOString(),
+          receivedTimestamp: new Date().toISOString(),
+          clockSkewMs: 0,
+          isLateArriving: false,
+          title: `Case Closed: ${resolutionCode}`,
+          description: `${analyst}: ${notes}`,
+          payload: { resolutionCode, notes, analyst },
+          severity: 'SUCCESS',
+        },
+      ],
+    };
+
+    investigations = investigations.map((x) => (x.id === caseId ? updated : x));
+    return updated;
   },
 
   // GET /reversals
