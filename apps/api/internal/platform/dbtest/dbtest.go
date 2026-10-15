@@ -6,6 +6,7 @@ import (
 
 	"context"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"os"
 	"testing"
 	"time"
@@ -56,6 +57,24 @@ func Tenant(t testing.TB, p *db.Pool) uuid.UUID {
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
+		// The audit trail refuses deletes, even from the owner. Tests clean up
+		// as a superuser with triggers and foreign keys switched off for this
+		// one transaction. This only works for a superuser, which test
+		// databases use; production roles cannot do it.
+		_ = p.WithTx(bg, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(bg, `SET LOCAL session_replication_role = replica`); err != nil {
+				return err
+			}
+			for _, q := range []string{
+				`DELETE FROM audit_events WHERE tenant_id = $1`,
+				`DELETE FROM audit_heads WHERE tenant_id = $1`,
+			} {
+				if _, err := tx.Exec(bg, q, id); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 		for _, q := range []string{
 			`DELETE FROM processed_events WHERE tenant_id = $1`,
 			`DELETE FROM outbox_events WHERE tenant_id = $1`,
