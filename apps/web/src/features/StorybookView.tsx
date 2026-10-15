@@ -17,6 +17,7 @@ import {
   getContrastRatio,
   type FinancialStatus,
 } from '@smartreversal/ui';
+import type { EvidenceItem } from '../types/domain';
 
 export const StorybookView: React.FC = () => {
   const { addToast } = useApp();
@@ -44,38 +45,55 @@ export const StorybookView: React.FC = () => {
     }
   };
 
-  const sampleEvidence = [
+  const sampleEvidence: EvidenceItem[] = [
     {
       id: 'e-1',
-      type: 'FACT' as const,
+      type: 'FACT',
       title: 'Ledger Debit Entry Verified',
       source: 'GL-1002 Core Banking',
       details: 'Customer account debited ₦150,000.00.',
       verified: true,
+      freshness: 'FRESH',
+      freshnessLabel: 'Verified Fresh',
+      isStale: false,
+      canSupportAction: true,
     },
     {
       id: 'e-2',
-      type: 'INFERRED' as const,
+      type: 'INFERRED',
       title: 'AI Anomaly Pattern Match',
       source: 'IsolationForest Model (Latency 14ms)',
       details: 'Cluster: Transient Switch Timeout. Confidence 96%.',
       verified: false,
+      freshness: 'FRESH',
+      freshnessLabel: 'Model Inference Fresh',
+      isStale: false,
+      canSupportAction: true,
     },
     {
       id: 'e-3',
-      type: 'MISSING' as const,
+      type: 'MISSING',
       title: 'Counterparty Inward Acknowledgment',
       source: 'Central Switch NIP',
       details: 'No acknowledgment received within 30s timeout window.',
       verified: false,
+      freshness: 'DEGRADED',
+      freshnessLabel: 'Missing Proof (Awaiting response)',
+      isStale: false,
+      canSupportAction: false,
+      missingActionLabel: 'Query NIP Gateway Status',
     },
     {
       id: 'e-4',
-      type: 'UNRESOLVED' as const,
+      type: 'UNRESOLVED',
       title: 'Suspense Account Variance',
       source: 'Escrow GL-9920',
       details: '₦150,000.00 discrepancy parked in escrow suspense.',
       verified: false,
+      freshness: 'STALE',
+      freshnessLabel: 'Stale (Audit Sync >2h ago)',
+      isStale: true,
+      canSupportAction: false,
     },
   ];
 
