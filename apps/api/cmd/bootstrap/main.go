@@ -13,8 +13,13 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
+	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 )
@@ -31,6 +36,7 @@ func run() error {
 	instName := flag.String("institution-name", "", "institution display name (default: the code)")
 	email := flag.String("email", "", "operator email")
 	name := flag.String("name", "", "operator display name (default: the email)")
+	seedClocks := flag.Bool("seed-clocks", false, "propose the v2 candidate regulatory clocks as this operator; they stay pending until someone else approves them")
 	roles := flag.String("roles", "", "comma-separated roles, for example ADMIN_INTEGRATION or REVERSAL_OFFICER,SUPERVISOR")
 	flag.Parse()
 
@@ -66,5 +72,19 @@ func run() error {
 		return err
 	}
 	fmt.Printf("institution %s (%s)\noperator %s\n", *code, tenant, user)
+
+	if *seedClocks {
+		svc := &configsvc.Service{Audit: &audit.Appender{}}
+		var proposed []configsvc.Version
+		err := pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
+			var err error
+			proposed, err = svc.SeedClockProposals(ctx, tx, tenant, user, time.Now())
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("seed clocks: %w", err)
+		}
+		fmt.Printf("proposed %d regulatory clocks; none is in force until another person approves it\n", len(proposed))
+	}
 	return nil
 }
