@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"github.com/jackc/pgx/v5"
+	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"strings"
 	"sync"
 	"testing"
@@ -289,4 +291,97 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type failingObserver struct{}
+
+func (failingObserver) Observe(context.Context, LoginEvent) error {
+	return errors.New("audit store down")
+}
+
+func TestLoginsAreWrittenToTheAuditChain(t *testing.T) {
+	r := newLoginRig(t)
+	r.auth.Observer = &AuditLoginObserver{Pool: r.pool, Appender: &audit.Appender{}}
+	id := r.addUser(t, "audited@example.test", "TXN_ANALYST")
+	ctx := context.Background()
+
+	if _, err := r.auth.Login(ctx, r.code, "audited@example.test", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.auth.Login(ctx, r.code, "audited@example.test", "the wrong password!")
+	_, _ = r.auth.Login(ctx, r.code, "ghost-account@example.test", goodPassword)
+	// MaxAttempts is 3: two more failures lock the account, so the third
+	// attempt and the correct password after it are both recorded as locked.
+	_, _ = r.auth.Login(ctx, r.code, "audited@example.test", "the wrong password!")
+	_, _ = r.auth.Login(ctx, r.code, "audited@example.test", "the wrong password!")
+	_, _ = r.auth.Login(ctx, r.code, "audited@example.test", "the wrong password!")
+	_, _ = r.auth.Login(ctx, r.code, "audited@example.test", goodPassword)
+
+	var recs []audit.Record
+	var verified audit.VerifyResult
+	err := r.pool.WithTenant(ctx, r.tenant, func(tx pgx.Tx) error {
+		var err error
+		if recs, err = audit.List(ctx, tx, r.tenant, audit.Filter{}, 0, 100); err != nil {
+			return err
+		}
+		verified, err = audit.Verify(ctx, tx, r.tenant)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.OK {
+		t.Fatalf("chain: %+v", verified)
+	}
+
+	count := map[string]int{}
+	for _, rec := range recs {
+		count[rec.Action]++
+		if rec.Action == "auth.login_succeeded" && (rec.ActorID != id || rec.Actor != audit.ActorUser) {
+			t.Errorf("success not attributed to the user: %+v", rec)
+		}
+		if rec.Action == "auth.login_unknown_user" && rec.Actor != audit.ActorSystem {
+			t.Errorf("unknown user should be a system-attributed record: %+v", rec)
+		}
+		// What the person typed must never be stored.
+		for k, v := range rec.Details {
+			if s, ok := v.(string); ok && (strings.Contains(s, "ghost-account") || strings.Contains(s, "@example.test")) {
+				t.Errorf("record stores an email in details[%s]: %q", k, s)
+			}
+		}
+		if strings.Contains(rec.SubjectID, "@") {
+			t.Errorf("record stores an email as the subject: %q", rec.SubjectID)
+		}
+	}
+	want := map[string]int{
+		"auth.login_succeeded": 1, "auth.login_wrong_password": 3, "auth.login_unknown_user": 1, "auth.login_account_locked": 2,
+	}
+	for action, n := range want {
+		if count[action] != n {
+			t.Errorf("%s recorded %d times, want %d (all: %v)", action, count[action], n, count)
+		}
+	}
+}
+
+func TestLoginFailsWhenTheSuccessCannotBeAudited(t *testing.T) {
+	r := newLoginRig(t)
+	r.auth.Observer = failingObserver{}
+	r.addUser(t, "noaudit@example.test", "TXN_ANALYST")
+
+	res, err := r.auth.Login(context.Background(), r.code, "noaudit@example.test", goodPassword)
+	if res != nil || err == nil || errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("login must fail with an internal error when auditing fails: res=%v err=%v", res, err)
+	}
+}
+
+func TestAnAuditFailureOnAFailedLoginDoesNotChangeTheAnswer(t *testing.T) {
+	r := newLoginRig(t)
+	r.auth.Observer = failingObserver{}
+	r.addUser(t, "bad@example.test", "TXN_ANALYST")
+	if _, err := r.auth.Login(context.Background(), r.code, "bad@example.test", "the wrong password!"); err != ErrInvalidCredentials {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := r.auth.Login(context.Background(), r.code, "nobody@example.test", goodPassword); err != ErrInvalidCredentials {
+		t.Fatalf("got %v", err)
+	}
 }
