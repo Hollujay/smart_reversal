@@ -1,0 +1,2 @@
+SessionID,Reference,Channel,Amount,Currency,Status,OriginatorAccount,BeneficiaryAccount,Timestamp
+NIP9901,TXN-20261015-NIP-9901,NIP,150000.00,NGN,FAILED,0123456789,9876543210,2026-10-15T09:30:00Z
