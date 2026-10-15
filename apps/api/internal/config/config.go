@@ -57,6 +57,10 @@ type Config struct {
 	JWTSecret    string
 	AIServiceURL string
 
+	WorkerHealthPort   int
+	OutboxPollInterval time.Duration
+	OutboxBatchSize    int
+
 	// FinancialExecutionEnabled gates every call to a reversal provider. It
 	// defaults to false and must be set explicitly.
 	FinancialExecutionEnabled bool

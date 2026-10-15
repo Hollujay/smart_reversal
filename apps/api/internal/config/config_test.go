@@ -44,6 +44,9 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ReadTimeout != 15*time.Second || c.ShutdownTimeout != 20*time.Second {
 		t.Fatalf("unexpected timeouts: %+v", c)
 	}
+	if c.WorkerHealthPort != 8081 || c.OutboxPollInterval != time.Second || c.OutboxBatchSize != 100 {
+		t.Fatalf("unexpected worker defaults: %+v", c)
+	}
 	if c.DBMaxConns != 25 || c.DBConnMaxLifetime != 5*time.Minute {
 		t.Fatalf("unexpected pool defaults: %d %s", c.DBMaxConns, c.DBConnMaxLifetime)
 	}
