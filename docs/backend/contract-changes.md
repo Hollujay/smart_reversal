@@ -22,6 +22,8 @@ Affects: frontend (`apps/web`). AI service is not affected.
 
 Status: implemented operations are `GET /v1/health` and `GET /v1/ready`. Every other operation is marked `x-status: planned` with the phase that implements it. Planned operations describe shape only where the v2 shared contract gives one.
 
+`.env.example` still sets `VITE_API_BASE_URL=http://localhost:8080/api/v1`, which no longer matches. The web app does not read it yet, so it was left for the frontend owner to change together with the types.
+
 Open before the first contract freeze: D4 (named owners), D14 (money), D15 (naming).
 
 Frontend action: `apps/web/src/types/domain.ts` still mirrors v0.1. Nothing breaks today, because the web app does not call the API yet. Types should move to the `/v1` shapes before the first integration.
