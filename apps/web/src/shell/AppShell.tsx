@@ -43,6 +43,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const navigationItems = [
     { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'agent-intake', label: 'Agent Complaint Intake', roles: ['CONTACT_CENTRE_AGENT', 'BRANCH_AGENT', 'ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: 'Live' },
+    { id: 'reverseit', label: 'ReverseIt Customer Portal', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN', 'CONTACT_CENTRE_AGENT', 'BRANCH_AGENT'], badge: 'S1–S9', isSpecial: true },
     { id: 'transactions', label: 'Transactions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'reconciliation', label: 'Reconciliation', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'exceptions', label: 'Exceptions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: '4' },
