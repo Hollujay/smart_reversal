@@ -23,6 +23,11 @@ Status: draft. Review at the end of each phase.
 | K15 | Go 1.27.2 incompatibility with a dependency | Closed | Medium | Verified: no incompatibility found | Backend |
 | K16 | Frontend built against types that differ from the shared contract | High | Medium | Resolve D14 and D15 before contract freeze, contract tests | Backend and frontend |
 | K17 | Press-reported regulatory clocks used as fact | Medium | High | Configuration with VERIFY status, shown to users as such | Backend |
+| K18 | MFA-gated actions are unreachable because nothing issues MFA tokens | Certain | High | Decide D20 and build a simulated second factor before B5 | Backend and mentors |
+| K19 | Production connects as a superuser, which bypasses row-level security | Medium | Critical | Document, require a non-superuser member of `sr_app`, add a startup check in B9 | Backend and ops |
+| K20 | Someone with superuser rights rewrites the audit chain and its head together | Low | High | Anchor the head outside the database on a schedule | Backend and ops |
+| K21 | Role and capability names do not match the bank's delegated-authority matrix | Medium | Medium | Verify with Wema; roles carry `unverified` | Backend |
+| K22 | Approval limits are not configured, so approvals deny | Certain | Medium | Obtain limits from Wema (D13). Fail closed is intended | Mentors |
 
 ## Assumptions
 

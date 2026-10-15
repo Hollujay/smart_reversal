@@ -16,26 +16,20 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 )
 
 func testPool(t *testing.T) *db.Pool {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping database integration test")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	p, err := db.Open(ctx, url, db.Options{MaxConns: 4})
-	if err != nil {
+	p := dbtest.Pool(t)
+	ctx := context.Background()
+	if _, err := p.Exec(ctx, `DELETE FROM processed_events`); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(p.Close)
-	// processed_events comes from migration 0002; run `migrate up` first.
-	if _, err := p.Exec(ctx, `DELETE FROM processed_events`); err != nil {
-		t.Fatalf("processed_events missing or unusable (run migrate up): %v", err)
-	}
-	if _, err := p.Exec(ctx, `DROP TABLE IF EXISTS stream_test_effects; CREATE TABLE stream_test_effects (event_id uuid PRIMARY KEY)`); err != nil {
+	// Handlers run as the tenant role, so it needs access to the scratch table.
+	if _, err := p.Exec(ctx, `DROP TABLE IF EXISTS stream_test_effects;
+		CREATE TABLE stream_test_effects (event_id uuid PRIMARY KEY);
+		GRANT SELECT, INSERT ON stream_test_effects TO sr_app`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = p.Exec(context.Background(), `DROP TABLE IF EXISTS stream_test_effects`) })
@@ -54,6 +48,7 @@ func testRedis(t *testing.T) *redis.Client {
 }
 
 type fixture struct {
+	tenant uuid.UUID
 	pool   *db.Pool
 	rc     *redis.Client
 	stream string
@@ -62,8 +57,10 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	pool := testPool(t)
 	f := &fixture{
-		pool:   testPool(t),
+		tenant: dbtest.Tenant(t, pool),
+		pool:   pool,
 		rc:     testRedis(t),
 		stream: fmt.Sprintf("test.stream.%d", time.Now().UnixNano()),
 		group:  "test-group",
@@ -85,7 +82,7 @@ func (f *fixture) consumer(name string, h Handler) *Consumer {
 func (f *fixture) publish(t *testing.T, eventID uuid.UUID) string {
 	t.Helper()
 	id, err := f.rc.XAdd(context.Background(), &redis.XAddArgs{Stream: f.stream, Values: map[string]any{
-		"event_id": eventID.String(), "type": "test.happened", "aggregate_id": "A-1",
+		"tenant_id": f.tenant.String(), "event_id": eventID.String(), "type": "test.happened", "aggregate_id": "A-1",
 		"payload": `{"n":1}`, "trace_id": "trace-1",
 	}}).Result()
 	if err != nil {
@@ -283,25 +280,29 @@ func TestMalformedMessagesGoStraightToDeadLetter(t *testing.T) {
 	if err := c.Setup(ctx); err != nil {
 		t.Fatal(err)
 	}
+	tid := f.tenant.String()
 	for _, values := range []map[string]any{
-		{"type": "x", "payload": "{}"},                           // no event id
-		{"event_id": "not-a-uuid", "type": "x", "payload": "{}"}, // bad id
-		{"event_id": uuid.NewString(), "payload": "{}"},          // no type
-		{"event_id": uuid.NewString(), "type": "x"},              // no payload
+		{"tenant_id": tid, "type": "x", "payload": "{}"},                                             // no event id
+		{"tenant_id": tid, "event_id": "not-a-uuid", "type": "x", "payload": "{}"},                   // bad id
+		{"tenant_id": tid, "event_id": uuid.NewString(), "payload": "{}"},                            // no type
+		{"tenant_id": tid, "event_id": uuid.NewString(), "type": "x"},                                // no payload
+		{"event_id": uuid.NewString(), "type": "x", "payload": "{}"},                                 // no tenant
+		{"tenant_id": "nope", "event_id": uuid.NewString(), "type": "x", "payload": "{}"},            // bad tenant
+		{"tenant_id": uuid.Nil.String(), "event_id": uuid.NewString(), "type": "x", "payload": "{}"}, // nil tenant
 	} {
 		if err := f.rc.XAdd(ctx, &redis.XAddArgs{Stream: f.stream, Values: values}).Err(); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if n, err := c.RunOnce(ctx); err != nil || n != 4 {
+	if n, err := c.RunOnce(ctx); err != nil || n != 7 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("handler ran %d times for malformed messages", calls.Load())
 	}
-	if l, _ := f.rc.XLen(ctx, DeadLetterStream(f.stream)).Result(); l != 4 {
-		t.Fatalf("dead letters=%d, want 4", l)
+	if l, _ := f.rc.XLen(ctx, DeadLetterStream(f.stream)).Result(); l != 7 {
+		t.Fatalf("dead letters=%d, want 7", l)
 	}
 	if f.pending(t) != 0 {
 		t.Fatalf("pending=%d", f.pending(t))
@@ -359,7 +360,7 @@ func TestCrashAfterCommitBeforeAckDoesNotRepeatTheEffect(t *testing.T) {
 	f.publish(t, evt)
 
 	// Simulate: the handler committed, then the process died before XACK.
-	if _, err := f.pool.Exec(ctx, `INSERT INTO processed_events (consumer, event_id) VALUES ($1, $2)`, f.group, evt); err != nil {
+	if _, err := f.pool.Exec(ctx, `INSERT INTO processed_events (tenant_id, consumer, event_id) VALUES ($1, $2, $3)`, f.tenant, f.group, evt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.RunOnce(ctx); err != nil {
@@ -457,5 +458,31 @@ func TestReplayDeadLettersOnEmptyStream(t *testing.T) {
 	n, err := ReplayDeadLetters(context.Background(), f.rc, f.stream, 10)
 	if err != nil || n != 0 {
 		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
+func TestHandlerRunsInsideTheMessagesTenant(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	var seen string
+	var role string
+	c := f.consumer("c1", func(ctx context.Context, tx pgx.Tx, m Message) error {
+		if m.TenantID != f.tenant {
+			t.Errorf("message tenant %s, want %s", m.TenantID, f.tenant)
+		}
+		if err := tx.QueryRow(ctx, `SELECT current_setting('app.tenant_id'), current_user`).Scan(&seen, &role); err != nil {
+			return err
+		}
+		return recordEffect(ctx, tx, m)
+	})
+	if err := c.Setup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.publish(t, uuid.New())
+	if _, err := c.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if seen != f.tenant.String() || role != db.TenantRole {
+		t.Fatalf("handler ran with tenant %q as role %q; want %s as %s", seen, role, f.tenant, db.TenantRole)
 	}
 }

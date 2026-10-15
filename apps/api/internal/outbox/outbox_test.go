@@ -3,7 +3,6 @@ package outbox
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -11,10 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 )
 
 func TestValidate(t *testing.T) {
-	good := Event{Stream: "transactions", Type: "transaction.ingested", AggregateID: "TXN-1", Payload: map[string]string{"a": "b"}}
+	good := Event{TenantID: uuid.New(), Stream: "transactions", Type: "transaction.ingested", AggregateID: "TXN-1", Payload: map[string]string{"a": "b"}}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +23,7 @@ func TestValidate(t *testing.T) {
 		"upper stream":    func(e *Event) { e.Stream = "Transactions" },
 		"space in stream": func(e *Event) { e.Stream = "a b" },
 		"long stream":     func(e *Event) { e.Stream = string(make([]byte, 101)) },
+		"no tenant":       func(e *Event) { e.TenantID = uuid.Nil },
 		"no type":         func(e *Event) { e.Type = "" },
 		"no aggregate":    func(e *Event) { e.AggregateID = "" },
 	} {
@@ -36,20 +37,9 @@ func TestValidate(t *testing.T) {
 
 func testPool(t *testing.T) *db.Pool {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping database integration test")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	p, err := db.Open(ctx, url, db.Options{MaxConns: 4})
-	if err != nil {
+	p := dbtest.Pool(t)
+	if _, err := p.Exec(context.Background(), `DELETE FROM outbox_events`); err != nil {
 		t.Fatal(err)
-	}
-	t.Cleanup(p.Close)
-	// The table comes from migration 0001; run `migrate up` first.
-	if _, err := p.Exec(ctx, `DELETE FROM outbox_events`); err != nil {
-		t.Fatalf("outbox_events missing or unusable (run migrate up): %v", err)
 	}
 	return p
 }
@@ -65,13 +55,14 @@ func countEvents(t *testing.T, p *db.Pool) int {
 
 func TestEnqueueCommitKeepsEvent(t *testing.T) {
 	p := testPool(t)
+	tid := dbtest.Tenant(t, p)
 	ctx := context.Background()
 
 	var id uuid.UUID
 	err := p.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		id, err = Enqueue(ctx, tx, Event{
-			Stream: "transactions", Type: "transaction.ingested", AggregateID: "TXN-1",
+			TenantID: tid, Stream: "transactions", Type: "transaction.ingested", AggregateID: "TXN-1",
 			Payload: map[string]any{"amount_minor": 1850000}, TraceID: "trace-1",
 		})
 		return err
@@ -95,11 +86,12 @@ func TestEnqueueCommitKeepsEvent(t *testing.T) {
 
 func TestEnqueueRollbackLeavesNoEvent(t *testing.T) {
 	p := testPool(t)
+	tid := dbtest.Tenant(t, p)
 	ctx := context.Background()
 	boom := errors.New("state change failed")
 
 	err := p.WithTx(ctx, func(tx pgx.Tx) error {
-		if _, err := Enqueue(ctx, tx, Event{Stream: "s", Type: "t", AggregateID: "a", Payload: 1}); err != nil {
+		if _, err := Enqueue(ctx, tx, Event{TenantID: tid, Stream: "s", Type: "t", AggregateID: "a", Payload: 1}); err != nil {
 			return err
 		}
 		return boom
@@ -114,11 +106,12 @@ func TestEnqueueRollbackLeavesNoEvent(t *testing.T) {
 
 func TestEnqueueRejectsDuplicateEventIDAndBadPayload(t *testing.T) {
 	p := testPool(t)
+	tid := dbtest.Tenant(t, p)
 	ctx := context.Background()
 	id := uuid.New()
 
 	err := p.WithTx(ctx, func(tx pgx.Tx) error {
-		e := Event{ID: id, Stream: "s", Type: "t", AggregateID: "a", Payload: 1}
+		e := Event{TenantID: tid, ID: id, Stream: "s", Type: "t", AggregateID: "a", Payload: 1}
 		if _, err := Enqueue(ctx, tx, e); err != nil {
 			return err
 		}
@@ -133,17 +126,68 @@ func TestEnqueueRejectsDuplicateEventIDAndBadPayload(t *testing.T) {
 	}
 
 	err = p.WithTx(ctx, func(tx pgx.Tx) error {
-		_, err := Enqueue(ctx, tx, Event{Stream: "s", Type: "t", AggregateID: "a", Payload: make(chan int)})
+		_, err := Enqueue(ctx, tx, Event{TenantID: tid, Stream: "s", Type: "t", AggregateID: "a", Payload: make(chan int)})
 		return err
 	})
 	if err == nil {
 		t.Fatal("unmarshalable payload was accepted")
 	}
 	err = p.WithTx(ctx, func(tx pgx.Tx) error {
-		_, err := Enqueue(ctx, tx, Event{Stream: "s", Type: "t", AggregateID: "a", Payload: nil})
+		_, err := Enqueue(ctx, tx, Event{TenantID: tid, Stream: "s", Type: "t", AggregateID: "a", Payload: nil})
 		return err
 	})
 	if err == nil {
 		t.Fatal("nil payload was accepted")
+	}
+}
+
+// Tenant code can add events for its own tenant, and see only those. It can
+// neither forge an event for another tenant nor alter or delete any event.
+func TestOutboxIsTenantIsolatedAndAppendOnlyForTenants(t *testing.T) {
+	p := testPool(t)
+	a, b := dbtest.Tenant(t, p), dbtest.Tenant(t, p)
+	ctx := context.Background()
+
+	add := func(tenant, as uuid.UUID) error {
+		return p.WithTenant(ctx, as, func(tx pgx.Tx) error {
+			_, err := Enqueue(ctx, tx, Event{TenantID: tenant, Stream: "s", Type: "t", AggregateID: "a", Payload: 1})
+			return err
+		})
+	}
+	if err := add(a, a); err != nil {
+		t.Fatalf("tenant A could not add its own event: %v", err)
+	}
+	if err := add(b, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := add(b, a); err == nil {
+		t.Fatal("tenant A forged an event for tenant B")
+	}
+
+	err := p.WithTenant(ctx, a, func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM outbox_events`).Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("tenant A sees %d events, want 1", n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, stmt := range []string{
+		`UPDATE outbox_events SET published_at = now()`,
+		`DELETE FROM outbox_events`,
+	} {
+		err := p.WithTenant(ctx, a, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, stmt)
+			return err
+		})
+		if err == nil {
+			t.Errorf("tenant role was allowed to run %q", stmt)
+		}
 	}
 }

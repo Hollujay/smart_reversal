@@ -15,6 +15,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/outbox"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/redisx"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 )
@@ -75,9 +76,10 @@ func TestWorkerPublishesOutboxAndStopsOnCancel(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}, "worker ready")
 
-	err := d.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+	tid := dbtest.Tenant(t, d.Pool)
+	err := d.Pool.WithTenant(ctx, tid, func(tx pgx.Tx) error {
 		_, err := outbox.Enqueue(ctx, tx, outbox.Event{
-			Stream: stream, Type: "test.happened", AggregateID: "A-1", Payload: map[string]int{"n": 1},
+			TenantID: tid, Stream: stream, Type: "test.happened", AggregateID: "A-1", Payload: map[string]int{"n": 1},
 		})
 		return err
 	})

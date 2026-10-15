@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-const goodSecret = "0123456789abcdef0123456789abcdef"
-
 func env(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) {
 		v, ok := m[k]
@@ -22,7 +20,6 @@ func base() map[string]string {
 		"DB_USER":     "app",
 		"DB_PASSWORD": "pw",
 		"DB_NAME":     "db",
-		"JWT_SECRET":  goodSecret,
 	}
 }
 
@@ -60,7 +57,7 @@ func TestLoadReportsAllMissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, k := range []string{"DB_USER", "DB_PASSWORD", "DB_NAME", "JWT_SECRET"} {
+	for _, k := range []string{"DB_USER", "DB_PASSWORD", "DB_NAME"} {
 		if !strings.Contains(err.Error(), k) {
 			t.Errorf("error should mention %s: %v", k, err)
 		}
@@ -69,7 +66,7 @@ func TestLoadReportsAllMissingRequired(t *testing.T) {
 
 func TestLoadRejectsBadValues(t *testing.T) {
 	cases := map[string]map[string]string{
-		"short secret":    with(base(), "JWT_SECRET", "short"),
+		"bad token ttl":   with(base(), "JWT_TOKEN_TTL", "soon"),
 		"bad port":        with(base(), "API_PORT", "70000"),
 		"non numeric":     with(base(), "DB_PORT", "abc"),
 		"bad duration":    with(base(), "API_READ_TIMEOUT", "fast"),
@@ -88,21 +85,59 @@ func TestLoadRejectsBadValues(t *testing.T) {
 	}
 }
 
-func TestPlaceholderSecretsOnlyAllowedInDevelopment(t *testing.T) {
+func TestPlaceholderDatabasePasswordOnlyAllowedInDevelopment(t *testing.T) {
 	placeholder := placeholderSecrets[0]
 
-	if _, err := LoadFrom(env(with(base(), "JWT_SECRET", placeholder))); err != nil {
+	if _, err := LoadFrom(env(with(base(), "DB_PASSWORD", placeholder))); err != nil {
 		t.Fatalf("development should accept placeholder: %v", err)
 	}
 	for _, e := range []string{EnvStaging, EnvProduction} {
-		m := with(base(), "JWT_SECRET", placeholder, "ENVIRONMENT", e, "DB_SSLMODE", "require")
+		m := with(base(), "DB_PASSWORD", placeholder, "ENVIRONMENT", e, "DB_SSLMODE", "require")
 		if _, err := LoadFrom(env(m)); err == nil {
-			t.Errorf("%s accepted a placeholder secret", e)
+			t.Errorf("%s accepted the placeholder database password", e)
 		}
-		m = with(base(), "DB_PASSWORD", placeholderSecrets[1], "ENVIRONMENT", e, "DB_SSLMODE", "require")
-		if _, err := LoadFrom(env(m)); err == nil {
-			t.Errorf("%s accepted a placeholder database password", e)
-		}
+	}
+}
+
+func TestSigningKeySettingsAreOptionalAndHaveDefaults(t *testing.T) {
+	c, err := LoadFrom(env(base()))
+	if err != nil {
+		t.Fatalf("migrate and worker must load without signing keys: %v", err)
+	}
+	if c.JWTKeyID != "k1" || c.JWTTokenTTL != 15*time.Minute || c.JWTPrivateKey != "" || c.JWTPublicKeys != "" {
+		t.Fatalf("unexpected defaults: %+v", c)
+	}
+	c, err = LoadFrom(env(with(base(), "JWT_KEY_ID", "2026-10", "JWT_PRIVATE_KEY", "abc", "JWT_PUBLIC_KEYS", "k0:def", "JWT_TOKEN_TTL", "5m")))
+	if err != nil || c.JWTKeyID != "2026-10" || c.JWTPrivateKey != "abc" || c.JWTPublicKeys != "k0:def" || c.JWTTokenTTL != 5*time.Minute {
+		t.Fatalf("values not read: %+v %v", c, err)
+	}
+}
+
+func TestAccountKeySettings(t *testing.T) {
+	c, err := LoadFrom(env(base()))
+	if err != nil || c.AccountTokenKey != "" || c.AccountEncKey != "" || c.AccountEncKeyID != "k1" {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	c, err = LoadFrom(env(with(base(), "ACCOUNT_TOKEN_KEY", "t", "ACCOUNT_ENC_KEY", "e", "ACCOUNT_ENC_KEY_ID", "2026-10")))
+	if err != nil || c.AccountTokenKey != "t" || c.AccountEncKey != "e" || c.AccountEncKeyID != "2026-10" {
+		t.Fatalf("values: %+v %v", c, err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("cfg", "config", c)
+	if strings.Contains(buf.String(), "ACCOUNT") || strings.Contains(buf.String(), "=e ") {
+		t.Fatalf("account keys leaked into the log: %s", buf.String())
+	}
+}
+
+func TestLoggingConfigNeverIncludesSigningKey(t *testing.T) {
+	c, err := LoadFrom(env(with(base(), "JWT_PRIVATE_KEY", "private-key-material")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("cfg", "config", c)
+	if strings.Contains(buf.String(), "private-key-material") {
+		t.Fatalf("signing key leaked: %s", buf.String())
 	}
 }
 
@@ -150,7 +185,7 @@ func TestLoggingConfigDoesNotLeakSecrets(t *testing.T) {
 	var buf bytes.Buffer
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("cfg", "config", c)
 	out := buf.String()
-	if strings.Contains(out, goodSecret) || strings.Contains(out, "very-secret-db-password") {
+	if strings.Contains(out, "very-secret-db-password") {
 		t.Fatalf("secret leaked into log: %s", out)
 	}
 	if !strings.Contains(out, "financial_execution_enabled=false") {

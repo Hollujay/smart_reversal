@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 )
 
 // TraceHeader carries the trace identifier on requests and responses.
@@ -21,13 +24,33 @@ type traceIDKey struct{}
 var validTraceID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
 
 // NewLogger returns a structured logger. Development uses readable text,
-// every other environment uses JSON.
+// every other environment uses JSON. Values that look like account or card
+// numbers are masked before they are written, as a safety net: code should log
+// tokens, not numbers.
 func NewLogger(env, level string) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: parseLevel(level)}
+	return NewLoggerTo(os.Stdout, env, level)
+}
+
+// NewLoggerTo is NewLogger writing to w.
+func NewLoggerTo(w io.Writer, env, level string) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: parseLevel(level), ReplaceAttr: redactAttr}
 	if env == "development" {
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+		return slog.New(slog.NewTextHandler(w, opts))
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	return slog.New(slog.NewJSONHandler(w, opts))
+}
+
+// redactAttr masks number-like digit runs in strings, messages and errors.
+func redactAttr(_ []string, a slog.Attr) slog.Attr {
+	switch a.Value.Kind() {
+	case slog.KindString:
+		a.Value = slog.StringValue(datashield.Redact(a.Value.String()))
+	case slog.KindAny:
+		if err, ok := a.Value.Any().(error); ok {
+			a.Value = slog.StringValue(datashield.Redact(err.Error()))
+		}
+	}
+	return a
 }
 
 func parseLevel(level string) slog.Level {

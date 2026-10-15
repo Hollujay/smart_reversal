@@ -10,6 +10,19 @@ Last updated: 2026-10-15. "Blocks" says which phase cannot finish, or start, wit
 | D2 | Messaging | Redis Streams with a PostgreSQL transactional outbox. PostgreSQL is authoritative. Redis is never the source of truth for financial outcomes. Approved 2026-10-15. |
 | D11 | Go version | Go 1.27.2 across `go.mod`, CI, Docker and docs, if dependencies are compatible. Done: all direct dependencies build, vet and test on 1.27.2, and the Docker image builds on `golang:1.27.2-alpine`. No blocker found. |
 
+## Applied as defaults in B1 (not yet confirmed)
+
+B1 started with D5 to D10 still open, on the project owner's instruction. Each was implemented as the recommendation in this register and recorded in ADR 0003. They remain open for confirmation, and each is isolated enough to change.
+
+| ID | Applied as |
+|---|---|
+| D5 | Ed25519 keys with a key set by `kid` |
+| D6 | Local users table, argon2id, behind `UserStore` |
+| D7 | Shared schema with row-level security and the `sr_app` role |
+| D8 | Separate audience for customers (verification only; issuance is B10) |
+| D9 | No admin bypass, maker never equals checker |
+| D10 | HMAC tokens and an AES-GCM vault for account numbers |
+
 ## Open, and what they block
 
 | ID | Decision | Recommendation | Blocks | Status |
@@ -30,6 +43,8 @@ Last updated: 2026-10-15. "Blocks" says which phase cannot finish, or start, wit
 | D17 | Internal clock start for the 24 hour failed-transfer clock. Press reports tie it to a complaint. v2 recommends starting at failure time. | Failure time (more protective), pending Compliance | B4 and B10 | Open with Compliance. |
 | D18 | Disputed POS/web clock: 72 hours in the scope document, 48 hours in another summary | Keep 72 h as configured value flagged `conflicting` | B10 | Open with Wema. |
 | D19 | Status-query-first policy, approval thresholds, and meaning of "within regulatory limits" | Documented as ADR items to confirm with mentors | B5 | Open with mentors. |
+| D20 | How a user obtains an MFA-backed token in Track H. The code enforces an `mfa` claim but nothing issues it. | A simulated second factor behind an interface (for example TOTP with a seeded secret), clearly labelled as simulated | B5 (approvals), B1 follow-up. Approving config, unmasking and lifting a freeze are unreachable until it exists | Open. |
+| D21 | Team model for the `team` audit scope and queue visibility | Define with case management | B4 | Open. The `team` scope is refused until then. |
 
 ## Blocks B0
 
@@ -39,8 +54,8 @@ None of the open items blocks B0. D11 is decided, D3 and D16 proceed on defaults
 
 - B1: D5, D6, D7, D8, D9, D10
 - B3: D13 rule thresholds
-- B4: D17
-- B5: D12, D19
+- B4: D17, D21
+- B5: D12, D19, D20
 - B10: D18
 
 ## Not to be invented

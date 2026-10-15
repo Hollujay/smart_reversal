@@ -19,6 +19,8 @@ var streamName = regexp.MustCompile(`^[a-z0-9._-]{1,100}$`)
 
 // Event is one message to publish.
 type Event struct {
+	// TenantID is the institution the event belongs to. Required.
+	TenantID uuid.UUID
 	// ID identifies the event for idempotent consumers. A random UUID is
 	// generated when it is zero.
 	ID uuid.UUID
@@ -38,6 +40,8 @@ type Event struct {
 // Validate reports whether the event can be stored.
 func (e Event) Validate() error {
 	switch {
+	case e.TenantID == uuid.Nil:
+		return errors.New("outbox: tenant id is required")
 	case !streamName.MatchString(e.Stream):
 		return errors.New("outbox: stream must match [a-z0-9._-]{1,100}")
 	case e.Type == "":
@@ -66,9 +70,9 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) (uuid.UUID, error) {
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO outbox_events (event_id, stream, event_type, aggregate_id, payload, trace_id)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		e.ID, e.Stream, e.Type, e.AggregateID, payload, e.TraceID)
+		INSERT INTO outbox_events (tenant_id, event_id, stream, event_type, aggregate_id, payload, trace_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		e.TenantID, e.ID, e.Stream, e.Type, e.AggregateID, payload, e.TraceID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("outbox: insert: %w", err)
 	}

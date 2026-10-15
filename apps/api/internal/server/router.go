@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
 )
@@ -20,6 +21,19 @@ type Options struct {
 	Service string
 	// Checkers are run by GET /v1/ready.
 	Checkers []Checker
+	// Verifier checks operator tokens. Nil means every protected route returns
+	// 401, which is the safe default when identity is not configured.
+	Verifier *identity.Verifier
+	// Auth handles POST /v1/auth/login. Nil leaves the route out entirely.
+	Auth *identity.Authenticator
+	// Services enables the routes that need a database, a permission policy and
+	// the audit trail. Nil leaves them out.
+	Services *Services
+}
+
+type authRoutes struct {
+	auth   *identity.Authenticator
+	logger *slog.Logger
 }
 
 // NewRouter returns the API router. Routes live under /v1.
@@ -40,6 +54,37 @@ func NewRouter(o Options) http.Handler {
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health", h.live)
 		v1.Get("/ready", h.ready)
+
+		if o.Auth != nil {
+			ar := &authRoutes{auth: o.Auth, logger: o.Logger}
+			v1.Post("/auth/login", ar.login)
+		}
+
+		// Everything below needs a valid operator token. Routes are added only
+		// inside this group, so a new route cannot be public by accident.
+		v1.Group(func(pr chi.Router) {
+			pr.Use(requireAuth(o.Verifier, identity.AudienceOps))
+			pr.Get("/me", me)
+			if o.Services.ready() {
+				pr.Get("/audit", o.Services.listAudit)
+				if o.Services.Config != nil {
+					pr.Get("/config/{key}", o.Services.readConfig)
+					pr.Get("/config/{key}/versions", o.Services.configHistory)
+					pr.Post("/config/{key}/proposals", o.Services.proposeConfig)
+					pr.Post("/config/{key}/versions/{version}/decision", o.Services.decideConfig)
+					pr.Get("/calendar/add-working-days", o.Services.addWorkingDays)
+					pr.Get("/calendar/business-time", o.Services.businessTime)
+					pr.Get("/calendar/next-cutoff", o.Services.nextCutoff)
+				}
+				if o.Services.KillSwitch != nil {
+					pr.Get("/killswitch", o.Services.getKillSwitch)
+					pr.Post("/killswitch", o.Services.changeKillSwitch)
+				}
+				if o.Services.Vault != nil {
+					pr.Post("/accounts/unmask", o.Services.unmask)
+				}
+			}
+		})
 	})
 	return r
 }
