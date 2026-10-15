@@ -737,7 +737,11 @@ components:
       properties:
         key: { type: string }
         version: { type: integer }
-        value: { type: integer, format: int64 }
+        value:
+          description: An integer for most keys. For `regulatory_clock.*` keys, an object with situation, duration, unit (minutes, hours, working_days), start_event, calendar and owner.
+          oneOf:
+            - { type: integer, format: int64 }
+            - { $ref: '#/components/schemas/RegulatoryClock' }
         source_reference: { type: string }
         verify_status: { type: string, enum: [confirmed, unverified, reported, draft, conflicting] }
         effective_from: { type: string, format: date-time }
@@ -748,11 +752,24 @@ components:
         decided_by: { type: string, format: uuid }
         decided_at: { type: string, format: date-time }
         decision_reason: { type: string }
+    RegulatoryClock:
+      type: object
+      required: [situation, duration, unit, start_event, calendar, owner]
+      properties:
+        situation: { type: string }
+        duration: { type: integer, minimum: 1, maximum: 365 }
+        unit: { type: string, enum: [minutes, hours, working_days] }
+        start_event: { type: string }
+        calendar: { type: string, example: WAT }
+        owner: { type: string }
     ConfigProposal:
       type: object
       required: [value, source_reference, effective_from, verify_status, reason]
       properties:
-        value: { type: integer, format: int64 }
+        value:
+          oneOf:
+            - { type: integer, format: int64 }
+            - { $ref: '#/components/schemas/RegulatoryClock' }
         source_reference: { type: string, example: Scope FR-04 }
         effective_from: { type: string, format: date-time }
         verify_status: { type: string, enum: [confirmed, unverified, reported, draft, conflicting] }
