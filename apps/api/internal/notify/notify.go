@@ -128,10 +128,12 @@ type Stored struct {
 }
 
 // ForCase lists a case's notifications, oldest first, for one audience (or all
-// when audience is empty).
+// when audience is empty). Messages with the same timestamp are put in the order
+// the customer would read them (detected before verified), so the order is
+// always the same.
 func ForCase(ctx context.Context, tx pgx.Tx, tenant, caseID uuid.UUID, audience string) ([]Stored, error) {
 	rows, err := tx.Query(ctx, `SELECT id, audience, stage, template_id, body, status, simulated, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
-		FROM notifications WHERE tenant_id = $1 AND case_id = $2 AND ($3 = '' OR audience = $3) ORDER BY created_at, id`, tenant, caseID, audience)
+		FROM notifications WHERE tenant_id = $1 AND case_id = $2 AND ($3 = '' OR audience = $3) ORDER BY created_at, CASE stage WHEN 'detected' THEN 0 WHEN 'verified' THEN 2 ELSE 1 END, id`, tenant, caseID, audience)
 	if err != nil {
 		return nil, err
 	}
