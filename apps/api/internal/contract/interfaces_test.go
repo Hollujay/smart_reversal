@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+
+	"github.com/smartreversal/smartreversal/apps/api/internal/mocks"
 )
 
 // interfaceFiles are the six external interfaces in scope section 13.3.
@@ -65,6 +67,38 @@ func TestNoUnlistedInterfaceFiles(t *testing.T) {
 	for _, e := range entries {
 		if !known[e.Name()] {
 			t.Errorf("interfaces/%s is not in the list of agreed interfaces", e.Name())
+		}
+	}
+}
+
+// The mock stubs must expose exactly the operations the contracts define, so a
+// mock cannot drift from the interface it stands in for.
+func TestMockRoutesMatchInterfaceContracts(t *testing.T) {
+	byKind := map[mocks.Kind]string{
+		mocks.KindStatus:   "status-query.yaml",
+		mocks.KindReversal: "reversal-api.yaml",
+		mocks.KindNotify:   "notification-gateway.yaml",
+	}
+	for kind, file := range byKind {
+		doc, err := openapi3.NewLoader().LoadFromFile(filepath.Join(interfacesDir(t), file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]bool{}
+		for path, item := range doc.Paths.Map() {
+			for method := range item.Operations() {
+				want[method+" "+path] = true
+			}
+		}
+		got := map[string]bool{}
+		for _, op := range mocks.Routes(kind) {
+			got[op] = true
+		}
+		if missing := diff(want, got); len(missing) > 0 {
+			t.Errorf("%s mock lacks operations from %s: %v", kind, file, missing)
+		}
+		if extra := diff(got, want); len(extra) > 0 {
+			t.Errorf("%s mock has operations not in %s: %v", kind, file, extra)
 		}
 	}
 }
