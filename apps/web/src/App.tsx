@@ -13,6 +13,7 @@ import { AgentIntakeView } from './features/AgentIntakeView';
 import { ReverseItView } from './features/reverseit/ReverseItView';
 import { RulesAndHealthView } from './features/RulesAndHealthView';
 import { ExecutiveReportsView } from './features/ExecutiveReportsView';
+import { ModelDriftAndShadowView } from './features/ModelDriftAndShadowView';
 
 const MainViewRouter: React.FC = () => {
   const { activeView } = useApp();
@@ -40,6 +41,8 @@ const MainViewRouter: React.FC = () => {
       return <RulesAndHealthView />;
     case 'executive-reports':
       return <ExecutiveReportsView />;
+    case 'model-drift':
+      return <ModelDriftAndShadowView />;
     case 'storybook':
       return <StorybookView />;
     default:

@@ -52,6 +52,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     { id: 'audit', label: 'Immutable Audit Trail', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'rules-health', label: 'Rules & Integration Health', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 12–13' },
     { id: 'executive-reports', label: 'Executive Reports & Heatmap', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 14–16' },
+    { id: 'model-drift', label: 'ML Drift & Shadow Matrix', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 17–18' },
     { id: 'storybook', label: 'Design System & Storybook', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], isSpecial: true },
   ];
 
