@@ -116,60 +116,89 @@ paths:
       operationId: ingestEvent
       summary: Ingest a transaction event
       description: |
-        At-least-once safe. The same key and payload returns 200. The same key
-        with a different payload returns 409. A schema error returns 422 and the
-        event goes to the dead-letter stream with the reason.
-      x-status: planned
-      x-phase: B2
+        Called by a source system (or the simulator) with a service assertion that
+        holds the `events:write` scope. The tenant comes from the service account.
+        `Idempotency-Key` must equal `source_event_ref`.
+
+        202 accepted. 200 an exact repeat (nothing changes). 409 the reference was
+        reused with different content. 422 the event is invalid or contradicts the
+        transaction it refers to; it is quarantined. Amounts are decimal strings of
+        minor units. Account numbers are never accepted, only account tokens.
+      x-status: implemented
+      security: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - name: X-Schema-Version
-          in: header
-          required: true
-          schema: { type: string, example: '1.2' }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/EventEnvelope' }
+            schema: { $ref: '#/components/schemas/TransactionEvent' }
       responses:
-        '200': { description: Duplicate of an event already accepted. }
-        '202': { description: Accepted and queued. }
+        '200':
+          description: Exact repeat of an event already accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAccepted' }
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
-        '429': { $ref: '#/components/responses/RateLimited' }
 
   /v1/transactions:
     get:
       tags: [Transactions]
       operationId: searchTransactions
-      summary: Search transactions
-      description: Masked by default. Cursor pagination.
-      x-status: planned
-      x-phase: B2
+      summary: List transactions, newest activity first
+      description: Needs the `view_exception_queue` grant with `full` or `metadata` scope.
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - { name: state, in: query, schema: { type: string, enum: [INITIATED, DEBITED, PENDING, CONFIRMED_SUCCESS, CONFIRMED_FAILURE, UNKNOWN, CONFLICTING, REVERSED] } }
+        - { name: rail, in: query, schema: { type: string } }
         - { name: reference, in: query, schema: { type: string } }
-        - { name: channel, in: query, schema: { type: string } }
-        - { name: status, in: query, schema: { type: string } }
       responses:
-        '200': { $ref: '#/components/responses/PlannedPage' }
+        '200':
+          description: A page of transactions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /v1/transactions/{id}:
     get:
       tags: [Transactions]
       operationId: getTransaction
-      summary: Transaction detail with timeline, evidence and source freshness
-      x-status: planned
-      x-phase: B2
+      summary: A transaction with its event timeline
+      x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
       responses:
-        '200': { $ref: '#/components/responses/PlannedObject' }
+        '200':
+          description: The transaction and its events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transaction, events]
+                properties:
+                  transaction: { $ref: '#/components/schemas/Transaction' }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/TransactionEventRecord' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1004,36 +1033,69 @@ components:
           type: string
           pattern: '^[A-Z]{3}$'
           example: NGN
-    EventEnvelope:
+    TransactionEvent:
       type: object
-      required: [institution_id, source_system, source_event_ref, event_type, source_ts, txn, raw_payload_hash]
+      required: [source_system, source_event_ref, event_type, source_ts, txn]
       properties:
-        institution_id: { type: string, example: INST-DEMO-01 }
         source_system: { type: string, example: SWITCH_A }
-        source_event_ref: { type: string, example: SW-20261014-000184233 }
-        event_type: { type: string, example: TRANSFER_RESPONSE_TIMEOUT }
+        source_event_ref: { type: string, example: SW-20261015-000184233 }
+        event_type:
+          type: string
+          description: Illustrative names; real adapters map their own codes onto these (VERIFY).
+          enum: [DEBIT_POSTED, TRANSFER_SENT, CREDIT_CONFIRMED, CREDIT_FAILED, TRANSFER_RESPONSE_TIMEOUT, SETTLEMENT_COMPLETED, REVERSAL_POSTED]
         source_ts: { type: string, format: date-time }
         txn:
           type: object
           required: [instruction_ref, channel, rail, amount_minor, currency, debit_account_token]
           properties:
             instruction_ref: { type: string }
-            channel: { type: string, example: MOBILE }
+            channel: { type: string, enum: [MOBILE, INTERNET, USSD, POS, ATM, CARD, GATEWAY, MERCHANT, API] }
             rail: { type: string, example: NIP }
-            amount_minor: { type: integer, format: int64 }
-            currency: { type: string, pattern: '^[A-Z]{3}$' }
-            debit_account_token:
-              type: string
-              description: Tokenised account reference. Raw account numbers are not accepted.
-        refs:
-          type: array
-          items:
-            type: object
-            required: [type, value]
-            properties:
-              type: { type: string, example: SESSION_ID }
-              value: { type: string }
-        raw_payload_hash: { type: string, example: 'sha256:7c1e' }
+            amount_minor: { type: string, pattern: '^[1-9][0-9]{0,15}$', description: 'Minor units as a decimal string.', example: '1850000' }
+            currency: { type: string, pattern: '^[A-Z]{3}$', example: NGN }
+            debit_account_token: { type: string, pattern: '^acct_[0-9a-f]{32}$' }
+            beneficiary_bank: { type: string }
+            beneficiary_token: { type: string, pattern: '^acct_[0-9a-f]{32}$' }
+            session_id: { type: string }
+    EventAccepted:
+      type: object
+      required: [event_id, txn_id, lifecycle_state, duplicate]
+      properties:
+        event_id: { type: string, format: uuid }
+        txn_id: { type: string, format: uuid }
+        lifecycle_state: { type: string }
+        duplicate: { type: boolean }
+    Transaction:
+      type: object
+      required: [id, instruction_ref, channel, rail, amount_minor, currency, debit_account_token, lifecycle_state, debit_status, credit_status, settlement_status, reversal_status, first_event_at, last_event_at, event_count, simulated]
+      properties:
+        id: { type: string, format: uuid }
+        instruction_ref: { type: string }
+        channel: { type: string }
+        rail: { type: string }
+        amount_minor: { type: string, example: '1850000' }
+        currency: { type: string }
+        debit_account_token: { type: string }
+        beneficiary_bank: { type: string }
+        session_id: { type: string }
+        lifecycle_state: { type: string, enum: [INITIATED, DEBITED, PENDING, CONFIRMED_SUCCESS, CONFIRMED_FAILURE, UNKNOWN, CONFLICTING, REVERSED] }
+        debit_status: { type: string }
+        credit_status: { type: string }
+        settlement_status: { type: string }
+        reversal_status: { type: string }
+        first_event_at: { type: string, format: date-time }
+        last_event_at: { type: string, format: date-time }
+        event_count: { type: integer }
+        simulated: { type: boolean, description: 'Always true in this build.' }
+    TransactionEventRecord:
+      type: object
+      required: [id, source_system, source_event_ref, event_type, source_ts]
+      properties:
+        id: { type: string, format: uuid }
+        source_system: { type: string }
+        source_event_ref: { type: string }
+        event_type: { type: string }
+        source_ts: { type: string, format: date-time }
     ReversalRequest:
       type: object
       required: [txn_id, case_id, reason_code, evidence_ids]
