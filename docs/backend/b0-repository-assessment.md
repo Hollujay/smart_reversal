@@ -6,7 +6,7 @@ This is the first B0 deliverable. It records what exists in the repository today
 
 ## 1. Scope and source documents
 
-The backend brief names four source documents (Complete Playbook Vol 1 + Vol 2, Vol 2 Phase-by-Phase Production Playbook, v2 Integrated Scope Prompt Pack, Full Project Scope). None of them are in this repository. This assessment and the traceability matrix are therefore built from the backend master brief only. Every row that cites a playbook section must be reconciled against the real documents before B1 starts. See `requirement-traceability.md`.
+The backend brief names four source documents (Complete Playbook Vol 1 + Vol 2, Vol 2 Phase-by-Phase Production Playbook, v2 Integrated Scope Prompt Pack, Full Project Scope). They are not stored in this repository. The first version of this assessment was written from the backend brief alone. The project owner then supplied the PDFs, and `requirement-traceability.md` has since been reconciled against them. The findings below describe the repository and are unchanged by that reconciliation, except where a later section says otherwise.
 
 ## 2. What exists
 
@@ -27,7 +27,7 @@ The backend brief names four source documents (Complete Playbook Vol 1 + Vol 2, 
 
 ### 3.1 The repository already chose Go, the brief proposes Python
 
-`implement.md` and `apps/api/README.md` define `apps/api` as Go with Chi, and `apps/ai-service` as Python with FastAPI. The brief proposes Python and FastAPI for the backend and also says to follow existing repository conventions. These conflict. This is decision D1 in `decisions-requiring-approval.md`, and it blocks all B0 code.
+`implement.md` and `apps/api/README.md` define `apps/api` as Go with Chi, and `apps/ai-service` as Python with FastAPI. The brief proposes Python and FastAPI for the backend and also says to follow existing repository conventions. These conflict. This was decision D1. The project owner approved keeping Go on 2026-10-15 (ADR 0002).
 
 ### 3.2 The Go module does not build
 
@@ -66,7 +66,7 @@ This code must be replaced in B1, not extended.
 
 ## 4. What B0 must leave behind
 
-1. A stack decision recorded as an ADR.
+1. A stack decision recorded as an ADR (done, ADR 0002).
 2. A building, starting, health-checked API process with a database connection and a migration runner.
 3. A worker entry point separate from the API process.
 4. `/v1` OpenAPI baseline with the shared error, pagination and auth conventions.
