@@ -2,6 +2,7 @@ package observability
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -75,5 +76,29 @@ func TestParseLevel(t *testing.T) {
 	if parseLevel("debug") != slog.LevelDebug || parseLevel("WARN") != slog.LevelWarn ||
 		parseLevel("error") != slog.LevelError || parseLevel("") != slog.LevelInfo {
 		t.Fatal("unexpected level mapping")
+	}
+}
+
+func TestLoggerMasksAccountAndCardNumbers(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLoggerTo(&buf, "production", "info")
+	logger.Info("debit of 0123456789 failed",
+		"account", "0123456789",
+		"card", "4111111111111111",
+		"err", errors.New("beneficiary 9876543210 rejected"),
+		"reference", "NIP202610001234",
+		"amount_minor", 1850000,
+		slog.Group("nested", slog.String("acct", "5556667778")),
+	)
+	out := buf.String()
+	for _, leaked := range []string{"0123456789", "4111111111111111", "9876543210", "5556667778"} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("log contains %s: %s", leaked, out)
+		}
+	}
+	for _, kept := range []string{"****6789", "****1111", "****3210", "NIP202610001234", "1850000"} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("log lost %s: %s", kept, out)
+		}
 	}
 }
