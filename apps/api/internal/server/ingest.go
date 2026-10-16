@@ -70,11 +70,11 @@ func (s *Services) ingestEvent(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 	case errors.Is(err, txn.ErrInvalid):
-		s.quarantine(r, svc, env.SourceSystem, err.Error(), env.Hash())
+		s.quarantineEnvelope(r, svc, env, err.Error())
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, httpx.CodeValidation, err.Error())
 		return
 	case errors.Is(err, txn.ErrCoreMismatch):
-		s.quarantine(r, svc, env.SourceSystem, err.Error(), env.Hash())
+		s.quarantineEnvelope(r, svc, env, err.Error())
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, httpx.CodeValidation, err.Error())
 		return
 	case errors.Is(err, txn.ErrConflict):
@@ -98,6 +98,14 @@ func (s *Services) ingestEvent(w http.ResponseWriter, r *http.Request) {
 func (s *Services) quarantine(r *http.Request, svc *servauth.Principal, source, reason, hash string) {
 	_ = s.Pool.WithTenant(r.Context(), svc.TenantID, func(tx pgx.Tx) error {
 		return s.Txn.Quarantine(r.Context(), tx, svc.TenantID, source, reason, hash)
+	})
+}
+
+// quarantineEnvelope is quarantine for an event that decoded, keeping it so it can
+// be replayed.
+func (s *Services) quarantineEnvelope(r *http.Request, svc *servauth.Principal, env txn.Envelope, reason string) {
+	_ = s.Pool.WithTenant(r.Context(), svc.TenantID, func(tx pgx.Tx) error {
+		return s.Txn.QuarantineEnvelope(r.Context(), tx, svc.TenantID, env, reason)
 	})
 }
 

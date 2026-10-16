@@ -99,7 +99,7 @@ func (im *Importer) Import(ctx context.Context, tenant uuid.UUID, mappingName st
 		case errors.Is(err, txn.ErrInvalid), errors.Is(err, txn.ErrCoreMismatch), errors.Is(err, txn.ErrConflict):
 			res.Rejected++
 			res.RowErrors = append(res.RowErrors, RowError{Line: rec.Line, Reason: err.Error()})
-			if qerr := im.quarantine(ctx, tenant, m, rec.Envelope.Hash(), rec.Line, err.Error()); qerr != nil {
+			if qerr := im.quarantineEnvelope(ctx, tenant, m, rec, err.Error()); qerr != nil {
 				return Result{}, qerr
 			}
 		default:
@@ -126,6 +126,14 @@ func (im *Importer) Import(ctx context.Context, tenant uuid.UUID, mappingName st
 func (im *Importer) quarantine(ctx context.Context, tenant uuid.UUID, m *Mapping, hash string, line int, reason string) error {
 	return im.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
 		return im.Txn.Quarantine(ctx, tx, tenant, m.SourceSystem, fmt.Sprintf("feed %s v%d line %d: %s", m.Name, m.Version, line, reason), hash)
+	})
+}
+
+// quarantineEnvelope keeps a refused event whole, so it can be replayed once the
+// cause, such as the source's clock, is fixed.
+func (im *Importer) quarantineEnvelope(ctx context.Context, tenant uuid.UUID, m *Mapping, rec Record, reason string) error {
+	return im.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
+		return im.Txn.QuarantineEnvelope(ctx, tx, tenant, rec.Envelope, fmt.Sprintf("feed %s v%d line %d: %s", m.Name, m.Version, rec.Line, reason))
 	})
 }
 
