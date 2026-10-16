@@ -26,6 +26,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reconciliation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/routing"
 	"github.com/smartreversal/smartreversal/apps/api/internal/rules"
 	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
@@ -120,7 +121,7 @@ func run() error {
 			Signer:   signer,
 			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
-		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService},
+		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService, Reconciliation: &reconciliation.Service{Pool: pool, Cases: caseService}, Routing: routingService},
 		ServiceVerifier: &servauth.Verifier{Pool: pool},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{

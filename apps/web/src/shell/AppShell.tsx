@@ -64,16 +64,16 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const navigationItems = [
     { id: 'dashboard', label: 'Dashboard', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'agent-intake', label: 'Agent Complaint Intake', roles: ['CONTACT_CENTRE_AGENT', 'BRANCH_AGENT', 'ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: 'Live' },
-    { id: 'reverseit', label: 'ReverseIt Customer Portal', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN', 'CONTACT_CENTRE_AGENT', 'BRANCH_AGENT'], badge: 'S1–S9', isSpecial: true },
+    { id: 'reverseit', label: 'ReverseIt Customer Portal', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN', 'CONTACT_CENTRE_AGENT', 'BRANCH_AGENT'], isSpecial: true },
     { id: 'transactions', label: 'Transactions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'reconciliation', label: 'Reconciliation', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'exceptions', label: 'Exceptions', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: '4' },
     { id: 'investigations', label: 'Investigations', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'reversals', label: 'Maker-Checker Reversals', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'ADMIN'], badge: '2' },
     { id: 'audit', label: 'Immutable Audit Trail', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
-    { id: 'rules-health', label: 'Rules & Integration Health', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 12–13' },
-    { id: 'executive-reports', label: 'Executive Reports & Heatmap', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 14–16' },
-    { id: 'model-drift', label: 'ML Drift & Shadow Matrix', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], badge: 'Screens 17–18' },
+    { id: 'rules-health', label: 'Rules & Integration Health', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+    { id: 'executive-reports', label: 'Executive Reports & Heatmap', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
+    { id: 'model-drift', label: 'ML Drift & Shadow Matrix', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'] },
     { id: 'storybook', label: 'Design System & Storybook', roles: ['ANALYST_MAKER', 'SUPERVISOR_CHECKER', 'AUDITOR', 'ADMIN'], isSpecial: true },
   ];
 
