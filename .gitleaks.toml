@@ -27,8 +27,10 @@ paths = [
 ]
 
 [[allowlists]]
-description = "The made-up raw_payload_hash shown in the event contract's example (sha256:7c1e...), used as a fixture value in tests"
+description = "The made-up account tokens used as fixture values in tests (acct_ plus a fixed 32 digit pattern). They are not credentials"
 targetRules = ["generic-api-key"]
 regexes = [
-  '''sha256:7c1e[0-9a-f]*''',
+  '''acct_0123456789abcdef0123456789abcdef''',
+  '''acct_fedcba9876543210fedcba9876543210''',
+  '''7c1e[0-9a-f]{4,}''',
 ]
