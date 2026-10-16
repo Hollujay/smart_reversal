@@ -62,19 +62,8 @@ func (s *Service) Ingest(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, env E
 	}
 	hash := env.Hash()
 
-	var existingID, existingTxn uuid.UUID
-	var existingHash string
-	err := tx.QueryRow(ctx, `SELECT id, txn_id, payload_hash FROM transaction_events
-		WHERE tenant_id = $1 AND source_system = $2 AND source_event_ref = $3`,
-		tenant, env.SourceSystem, env.SourceEventRef).Scan(&existingID, &existingTxn, &existingHash)
-	switch {
-	case err == nil && existingHash == hash:
-		state, serr := s.lifecycle(ctx, tx, tenant, existingTxn)
-		return Result{Outcome: Duplicate, EventID: existingID, TxnID: existingTxn, Lifecycle: state}, serr
-	case err == nil:
-		return Result{}, ErrConflict
-	case !errors.Is(err, pgx.ErrNoRows):
-		return Result{}, fmt.Errorf("txn: look up event: %w", err)
+	if res, found, err := s.existing(ctx, tx, tenant, env, hash); err != nil || found {
+		return res, err
 	}
 
 	c := env.Txn
@@ -94,11 +83,16 @@ func (s *Service) Ingest(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, env E
 	var id uuid.UUID
 	var have Core
 	var amount int64
-	err = tx.QueryRow(ctx, `SELECT id, channel, rail, amount_minor, currency, debit_account_token, beneficiary_bank, beneficiary_token, session_id
+	err := tx.QueryRow(ctx, `SELECT id, channel, rail, amount_minor, currency, debit_account_token, beneficiary_bank, beneficiary_token, session_id
 		FROM transactions WHERE tenant_id = $1 AND instruction_ref = $2 FOR UPDATE`, tenant, c.InstructionRef).
 		Scan(&id, &have.Channel, &have.Rail, &amount, &have.Currency, &have.DebitAccountToken, &have.BeneficiaryBank, &have.BeneficiaryToken, &have.SessionID)
 	if err != nil {
 		return Result{}, fmt.Errorf("txn: lock transaction: %w", err)
+	}
+	// Another delivery of this same event may have committed while this one waited
+	// for the transaction's lock, so look again now that the lock is held.
+	if res, found, err := s.existing(ctx, tx, tenant, env, hash); err != nil || found {
+		return res, err
 	}
 	have.AmountMinor = Amount(amount)
 	if have.Rail != c.Rail || have.AmountMinor != c.AmountMinor || have.Currency != c.Currency ||
@@ -136,6 +130,26 @@ func (s *Service) Ingest(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, env E
 		return Result{}, err
 	}
 	return Result{Outcome: Accepted, EventID: eventID, TxnID: id, Lifecycle: p.Lifecycle}, nil
+}
+
+// existing reports whether the source's reference is already stored. The same
+// content is a duplicate; different content is a conflict.
+func (s *Service) existing(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, env Envelope, hash string) (Result, bool, error) {
+	var existingID, existingTxn uuid.UUID
+	var existingHash string
+	err := tx.QueryRow(ctx, `SELECT id, txn_id, payload_hash FROM transaction_events
+		WHERE tenant_id = $1 AND source_system = $2 AND source_event_ref = $3`,
+		tenant, env.SourceSystem, env.SourceEventRef).Scan(&existingID, &existingTxn, &existingHash)
+	switch {
+	case err == nil && existingHash == hash:
+		state, serr := s.lifecycle(ctx, tx, tenant, existingTxn)
+		return Result{Outcome: Duplicate, EventID: existingID, TxnID: existingTxn, Lifecycle: state}, true, serr
+	case err == nil:
+		return Result{}, true, ErrConflict
+	case !errors.Is(err, pgx.ErrNoRows):
+		return Result{}, true, fmt.Errorf("txn: look up event: %w", err)
+	}
+	return Result{}, false, nil
 }
 
 func (s *Service) lifecycle(ctx context.Context, tx pgx.Tx, tenant, id uuid.UUID) (string, error) {

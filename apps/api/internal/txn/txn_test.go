@@ -397,3 +397,35 @@ func TestInvalidEventsAreQuarantinedNotStored(t *testing.T) {
 		t.Fatalf("quarantined %d, transactions %d", q, txns)
 	}
 }
+
+func TestTheSameEventDeliveredConcurrentlyIsStoredOnceAndReportedAsADuplicate(t *testing.T) {
+	r := newRig(t)
+	e := env("INS-R003", EvDebitPosted, "EV-R9", t0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	accepted, dup := 0, 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := r.ingest(t, e)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				t.Error(err)
+			case res.Outcome == Accepted:
+				accepted++
+			default:
+				dup++
+			}
+		}()
+	}
+	wg.Wait()
+	if accepted != 1 || dup != 7 {
+		t.Fatalf("accepted=%d duplicate=%d", accepted, dup)
+	}
+	if _, _, n := r.row(t, "INS-R003"); n != 1 || r.outboxCount(t) != 1 {
+		t.Fatalf("events=%d outbox=%d", n, r.outboxCount(t))
+	}
+}
