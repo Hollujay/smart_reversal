@@ -20,6 +20,8 @@ func (m *Mapping) Parse(data []byte) ([]Record, []RowError, error) {
 		return m.parseCSV(data)
 	case FixedWidth:
 		return m.parseFixed(data)
+	case XML:
+		return m.parseXML(data)
 	}
 	return nil, nil, fmt.Errorf("%w: format %s has no parser", ErrMapping, m.Format)
 }

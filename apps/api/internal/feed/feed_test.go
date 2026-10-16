@@ -191,3 +191,43 @@ func TestFixedWidthMappingMustFitItsRecord(t *testing.T) {
 		t.Fatal("an empty file was accepted")
 	}
 }
+
+func gateway() *Mapping {
+	return &Mapping{
+		Name: "gateway-xml", Version: 1, Format: XML, SourceSystem: "GATEWAY_X", RecordElement: "Event",
+		Fields: map[string]Locator{
+			FSourceEventRef: {Element: "id"}, FEventType: {Element: "Code"}, FSourceTS: {Element: "Time"}, FInstructionRef: {Element: "Instr"},
+			FChannel: {Element: "Channel"}, FRail: {Element: "Rail"}, FAmount: {Element: "Amount"}, FCurrency: {Element: "Ccy"},
+			FDebitToken: {Element: "Debit"}, FGatewayRef: {Element: "GwRef"},
+		},
+		EventCodes: map[string]string{"DR": "DEBIT_POSTED", "OK": "CREDIT_CONFIRMED"},
+		TimeLayout: time.RFC3339, TimeZone: "UTC", AmountUnit: UnitMajor,
+	}
+}
+
+func TestXMLReadsAttributesAndChildrenAndReportsBadRecords(t *testing.T) {
+	recs, errs, err := gateway().Parse(fixture(t, "gateway.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || len(errs) != 1 || !strings.Contains(errs[0].Reason, "record 3") {
+		t.Fatalf("%d %+v", len(recs), errs)
+	}
+	e := recs[0].Envelope
+	if e.SourceEventRef != "EV-3001" || e.EventType != "DEBIT_POSTED" || e.Txn.AmountMinor != 1850000 || recs[0].Refs["GATEWAY_REF"] != "GW-3001" {
+		t.Fatalf("%+v %+v", e, recs[0].Refs)
+	}
+}
+
+func TestXMLRefusesDTDsMalformedAndEmptyDocuments(t *testing.T) {
+	for name, doc := range map[string]string{
+		"entity declaration": `<?xml version="1.0"?><!DOCTYPE Events [<!ENTITY x "boom">]><Events><Event id="EV-1"><Code>DR</Code></Event></Events>`,
+		"not well formed":    `<Events><Event id="EV-1"><Code>DR</Event></Events>`,
+		"no records":         `<Events></Events>`,
+		"empty":              ``,
+	} {
+		if recs, _, err := gateway().Parse([]byte(doc)); err == nil || len(recs) != 0 {
+			t.Errorf("%s accepted: %v", name, err)
+		}
+	}
+}
