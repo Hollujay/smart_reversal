@@ -84,7 +84,8 @@ func (m *Mapping) parseTime(s string) (time.Time, error) {
 // places, so nothing is rounded.
 func (m *Mapping) parseAmount(s string) (int64, error) {
 	if m.AmountUnit == UnitMinor {
-		return txn.ParseAmount(s)
+		// Fixed-width files pad numbers with zeros.
+		return txn.ParseAmount(strings.TrimLeft(s, "0"))
 	}
 	whole, frac, _ := strings.Cut(s, ".")
 	if len(frac) > 2 {

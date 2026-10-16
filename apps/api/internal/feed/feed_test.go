@@ -141,3 +141,53 @@ func TestCSVWithByteOrderMarkAndOtherDelimiter(t *testing.T) {
 		t.Fatalf("%v %v %v", err, recs, errs)
 	}
 }
+
+func switchB() *Mapping {
+	return &Mapping{
+		Name: "switch-b-fixed", Version: 1, Format: FixedWidth, SourceSystem: "SWITCH_B", RecordLen: 106, SkipHeader: true,
+		Fields: map[string]Locator{
+			FSourceEventRef: {Start: 0, Len: 10}, FEventType: {Start: 10, Len: 2}, FSourceTS: {Start: 12, Len: 19}, FInstructionRef: {Start: 31, Len: 10},
+			FChannel: {Start: 41, Len: 8}, FRail: {Start: 49, Len: 5}, FAmount: {Start: 54, Len: 12}, FCurrency: {Start: 66, Len: 3},
+			FDebitToken: {Start: 69, Len: 37},
+		},
+		EventCodes: map[string]string{"DR": "DEBIT_POSTED", "OK": "CREDIT_CONFIRMED"},
+		TimeLayout: "2006-01-02 15:04:05", TimeZone: "UTC", AmountUnit: UnitMinor,
+	}
+}
+
+func TestFixedWidthReadsByOffsetAndRejectsShiftedLines(t *testing.T) {
+	m := switchB()
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	recs, errs, err := m.Parse(fixture(t, "switch_b.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || len(errs) != 2 {
+		t.Fatalf("%d records, errors %+v", len(recs), errs)
+	}
+	e := recs[1].Envelope
+	if e.SourceEventRef != "EV-2002" || e.EventType != "CREDIT_CONFIRMED" || e.Txn.AmountMinor != 1850000 || e.Txn.Channel != "MOBILE" || e.Txn.DebitAccountToken != "acct_0123456789abcdef0123456789abcdef" {
+		t.Fatalf("%+v", e)
+	}
+	if errs[0].Line != 4 || errs[1].Line != 5 || !strings.Contains(errs[1].Reason, "bytes") {
+		t.Fatalf("%+v", errs)
+	}
+}
+
+func TestFixedWidthMappingMustFitItsRecord(t *testing.T) {
+	m := switchB()
+	m.RecordLen = 100
+	if err := m.Validate(); !errors.Is(err, ErrMapping) {
+		t.Fatalf("%v", err)
+	}
+	m = switchB()
+	m.RecordLen = 0
+	if err := m.Validate(); !errors.Is(err, ErrMapping) {
+		t.Fatalf("%v", err)
+	}
+	if _, _, err := switchB().Parse([]byte("  \n")); err == nil {
+		t.Fatal("an empty file was accepted")
+	}
+}
