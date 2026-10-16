@@ -217,6 +217,10 @@ type Service struct {
 	Audit  *audit.Appender
 	Config *configsvc.Service
 	Now    func() time.Time
+	// OnClose, when set, is called inside the transition's transaction after a case
+	// reaches a terminal status. It must not change the case. An error stops the
+	// transition.
+	OnClose func(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, c Case, by uuid.UUID) error
 }
 
 func (s *Service) now() time.Time {
@@ -549,7 +553,16 @@ func (s *Service) Transition(ctx context.Context, tx pgx.Tx, tenant, caseID uuid
 		Fields: map[string]any{"case_id": caseID.String(), "case_ref": c.Ref, "classification": c.Classification, "from_status": from, "to_status": to, "version": c.Version}}); err != nil {
 		return Case{}, err
 	}
-	return scanCase(tx.QueryRow(ctx, `SELECT `+caseColumns+` FROM cases WHERE tenant_id = $1 AND id = $2`, tenant, caseID))
+	out, err := scanCase(tx.QueryRow(ctx, `SELECT `+caseColumns+` FROM cases WHERE tenant_id = $1 AND id = $2`, tenant, caseID))
+	if err != nil {
+		return Case{}, err
+	}
+	if s.OnClose != nil && IsTerminal(to) {
+		if err := s.OnClose(ctx, tx, tenant, out, a.ID); err != nil {
+			return Case{}, err
+		}
+	}
+	return out, nil
 }
 
 // Assign sets the owner of a case.

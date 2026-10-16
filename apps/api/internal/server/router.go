@@ -83,6 +83,11 @@ func NewRouter(o Options) http.Handler {
 			v1.Route("/customer", func(cr chi.Router) {
 				cr.Use(requireAuth(o.Verifier, identity.AudienceCustomer))
 				cr.Get("/me", o.Services.customerMe)
+				if o.Services.Reports != nil && o.Services.Cases != nil {
+					cr.Get("/cases", o.Services.customerCases)
+					cr.Get("/cases/{id}/timeline", o.Services.customerCaseTimeline)
+					cr.Get("/cases/{id}/escalation", o.Services.customerCaseEscalation)
+				}
 				if o.Services.Reports != nil {
 					cr.Post("/reports", o.Services.createCustomerReport)
 					cr.Get("/reports", o.Services.listCustomerReports)
@@ -92,6 +97,7 @@ func NewRouter(o Options) http.Handler {
 					cr.Get("/reports/{id}/deadline", o.Services.customerReportDeadline)
 					cr.Put("/reports/{id}/complaint", o.Services.editCustomerComplaint)
 					cr.Post("/reports/{id}/complaint", o.Services.submitCustomerComplaint)
+					cr.Post("/reports/{id}/feedback", o.Services.customerFeedback)
 				}
 			})
 		}
@@ -121,6 +127,10 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/quarantine", o.Services.listQuarantine)
 					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
 					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
+				}
+				if o.Services.Cases != nil {
+					pr.Get("/labeled-examples", o.Services.listLabeledExamples)
+					pr.Post("/labeled-examples/{id}/decision", o.Services.decideLabeledExample)
 				}
 				if o.Services.Rules != nil {
 					pr.Get("/rules", o.Services.listRules)

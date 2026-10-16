@@ -671,3 +671,45 @@ func (s *Service) closure(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.UUI
 	}
 	return c, rows.Err()
 }
+
+// ---- the customer's cases -------------------------------------------------------
+
+// VisibleCaseIDs returns the cases a customer may see: those they reported, and those
+// the bank detected on transactions of accounts the bank recorded as theirs, whether or
+// not the customer ever reported them.
+func (s *Service) VisibleCaseIDs(ctx context.Context, tx pgx.Tx, tenant, customerID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT c.id FROM cases c
+		WHERE c.tenant_id = $1 AND (
+		  EXISTS (SELECT 1 FROM customer_reports r WHERE r.tenant_id = c.tenant_id AND r.customer_id = $2 AND r.case_id = c.id)
+		  OR EXISTS (SELECT 1 FROM transactions t JOIN customer_accounts a ON a.tenant_id = t.tenant_id AND a.account_token = t.debit_account_token
+		             WHERE t.tenant_id = c.tenant_id AND t.id = c.txn_id AND a.customer_id = $2))
+		ORDER BY c.opened_at DESC, c.id LIMIT 200`, tenant, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// CanSeeCase reports whether the case is one of the customer's. A case that is not is
+// indistinguishable from one that does not exist.
+func (s *Service) CanSeeCase(ctx context.Context, tx pgx.Tx, tenant, customerID, caseID uuid.UUID) (bool, error) {
+	ids, err := s.VisibleCaseIDs(ctx, tx, tenant, customerID)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range ids {
+		if id == caseID {
+			return true, nil
+		}
+	}
+	return false, nil
+}

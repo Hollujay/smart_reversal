@@ -26,6 +26,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
+	"github.com/smartreversal/smartreversal/apps/api/internal/labels"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
@@ -105,7 +106,7 @@ func run() error {
 	configService := &configsvc.Service{Audit: appender}
 	killService := &killswitch.Service{Audit: appender}
 	txnService := &txn.Service{}
-	caseService := &cases.Service{Audit: appender, Config: configService}
+	caseService := &cases.Service{Audit: appender, Config: configService, OnClose: labels.OnClose}
 	// Execution is simulated: the sources below are the synthetic ones. No real
 	// provider adapter exists in this build.
 	var customerLogin *customer.Login
