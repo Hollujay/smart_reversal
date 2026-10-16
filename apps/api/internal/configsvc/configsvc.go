@@ -64,6 +64,11 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^calendar\.settlement_lag_days\.[A-Z0-9_]{2,30}$`), 0, 10, "business days", "Business days between the cut-off date and settlement on a rail", false},
 	{regexp.MustCompile(`^reversal\.auto_eligible\.[A-Z]{3,4}[0-9]{3}$`), 0, 1, "flag", "1 lets automation reverse this exception type without a human approval, within the auto limit", false},
 	{regexp.MustCompile(`^reversal\.simulated_execution_enabled$`), 0, 1, "flag", "1 allows reversals to run against the SIMULATED provider. There is no live provider in this build", false},
+	{regexp.MustCompile(`^customer\.ack_target_hours$`), 1, 24 * 30, "hours", "Hours within which the bank acknowledges a customer claim that matches no transaction yet", false},
+	{regexp.MustCompile(`^internal_target_hours\.[A-Z0-9_]{3,40}$`), 0, 24 * 30, "hours", "The bank's own target for a situation, earlier than its regulatory clock, keyed by the clock id", false},
+	{regexp.MustCompile(`^deadline\.approaching_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as approaching", false},
+	{regexp.MustCompile(`^deadline\.urgent_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as urgent", false},
+	{regexp.MustCompile(`^customer\.reports_per_hour$`), 1, 1000, "reports", "Most reports one customer may create in an hour, as abuse protection", false},
 	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
 
