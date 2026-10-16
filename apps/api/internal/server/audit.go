@@ -15,6 +15,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/correlate"
+	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
@@ -42,6 +43,9 @@ type Services struct {
 	Txn *txn.Service
 	// Feed enables POST /v1/feeds/{mapping}/files (needs ServiceVerifier on Options).
 	Feed *feed.Importer
+	// CustomerLogin enables the ReverseIt customer routes under /v1/customer. Nil
+	// leaves them out entirely.
+	CustomerLogin *customer.Login
 	// Rules enables the /v1/rules routes. Nil leaves them out.
 	Rules *rules.Engine
 	// Redis, when set, lets GET /v1/pipeline report stream backlog. Nil is allowed:

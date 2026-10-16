@@ -30,6 +30,7 @@ const (
 	CodeReversalErr = "REV001"
 	CodeSettlement  = "STL001"
 	CodeCustomer    = "CUS001"
+	CodeWrongAcct   = "CUS002" // customer-reported wrong account or amount; separate written-reversal path
 	CodeAtmFault    = "ATM001"
 	CodeDisputedFee = "FEE001"
 	CodeVendorDrop  = "VND001"
@@ -44,6 +45,7 @@ var knownCodes = map[string]bool{
 	CodeReversalErr: true,
 	CodeSettlement:  true,
 	CodeCustomer:    true,
+	CodeWrongAcct:   true,
 	CodeAtmFault:    true,
 	CodeDisputedFee: true,
 	CodeVendorDrop:  true,
@@ -221,7 +223,7 @@ func (s *Service) now() time.Time {
 // approved configuration only.
 func clockFor(code, rail string) string {
 	switch {
-	case code == CodeDuplicate:
+	case code == CodeDuplicate || code == CodeWrongAcct:
 		return "WRONG_ACCOUNT_REQUEST"
 	case (code == CodeNoCredit || code == CodeUnknown || code == CodeCustomer || code == CodeIncomplete) && (rail == "NIP" || rail == "INTERCHANGE"):
 		return "FAILED_INSTANT_TRANSFER"
