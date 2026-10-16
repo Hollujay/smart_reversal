@@ -13,6 +13,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/correlate"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
@@ -39,6 +40,8 @@ type Services struct {
 	Txn *txn.Service
 	// Feed enables POST /v1/feeds/{mapping}/files (needs ServiceVerifier on Options).
 	Feed *feed.Importer
+	// Correlate enables POST /v1/observations and the evidence routes (needs Txn).
+	Correlate *correlate.Matcher
 	// Cases enables the exception queue and case routes. Nil leaves them out.
 	Cases *cases.Service
 	// Reversal enables the simulated reversal and approval routes (needs Cases).

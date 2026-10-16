@@ -189,6 +189,159 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/observations:
+    post:
+      tags: [Ingestion]
+      operationId: submitObservation
+      summary: Deliver evidence that identifies a transaction only by external references
+      description: |
+        Called by a source that does not know our instruction reference (a switch, a
+        gateway, a settlement feed) with a service assertion holding `events:write`.
+        The references (RRN, STAN, session, ledger id, gateway reference) are scored
+        against known transactions together with amount, currency and time. A
+        confident, unambiguous match is attached as an event of that transaction.
+        Anything else is queued for a person (`GET /v1/evidence`) with the reason and
+        the candidates. 202 linked or queued, 200 seen before, 409 the reference was
+        reused with different content, 422 invalid.
+      x-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Observation' }
+      responses:
+        '200':
+          description: Seen before; the first outcome is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CorrelationDecision' }
+        '202':
+          description: Linked or queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CorrelationDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/sources:
+    get:
+      tags: [Ingestion]
+      operationId: listSources
+      summary: Freshness and clock skew of every source that has sent events
+      description: |
+        Needs the `view_exception_queue` grant with `full` or `metadata` scope. Status
+        is `fresh`, `stale` or `down` against the expectation people set for that
+        source, or `unconfigured` when none is set. An unconfigured source is never
+        reported as fresh. Silence is measured from the last time anything was received.
+        Skew is received time minus the time on the event, over the newest 200 events;
+        it is not meaningful for files imported long after the events happened.
+      x-status: implemented
+      responses:
+        '200':
+          description: One row per source.
+          content:
+            application/json:
+              schema: { type: object, required: [items, as_of], properties: { as_of: { type: string, format: date-time }, items: { type: array, items: { $ref: '#/components/schemas/SourceStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/sources/{system}/expectation:
+    put:
+      tags: [Ingestion]
+      operationId: setSourceExpectation
+      summary: Set how often a source is expected to send, and how much clock skew is tolerable
+      description: |
+        Needs `manage_ingestion` with `full` scope and MFA. Audited. Only for a source
+        that has already sent events. `down_after_secs` must exceed `stale_after_secs`.
+        The values are for people who know the source to set; the platform assumes none.
+      x-status: implemented
+      parameters:
+        - { name: system, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceExpectation' }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceExpectation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/evidence:
+    get:
+      tags: [Ingestion]
+      operationId: listEvidence
+      summary: List evidence waiting to be matched, or already linked or discarded
+      description: Needs the `manage_ingestion` grant (no MFA to view). `status` is `open` (default), `linked` or `discarded`.
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, linked, discarded] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        '200':
+          description: Evidence, oldest first.
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/EvidenceItem' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/evidence/{id}/link:
+    post:
+      tags: [Ingestion]
+      operationId: linkEvidence
+      summary: Link queued evidence to a transaction
+      description: |
+        Needs `manage_ingestion` with `full` scope and MFA, a transaction id and a
+        reason. The amount and currency must agree (422 otherwise). Audited in the
+        same transaction. 409 already resolved.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [txn_id, reason], properties: { txn_id: { type: string, format: uuid }, reason: { type: string, minLength: 5, maxLength: 500 } } }
+      responses:
+        '200': { description: Linked. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/evidence/{id}/discard:
+    post:
+      tags: [Ingestion]
+      operationId: discardEvidence
+      summary: Close queued evidence as belonging to no transaction
+      description: Same permission as linking. The row is kept with the reason.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 500 } } }
+      responses:
+        '200': { description: Discarded. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/quarantine:
     get:
       tags: [Ingestion]
@@ -1494,6 +1647,10 @@ components:
             beneficiary_bank: { type: string }
             beneficiary_token: { type: string, pattern: '^acct_[0-9a-f]{32}$' }
             session_id: { type: string }
+        refs:
+          type: object
+          description: External references for correlation. Keys are RRN, STAN, SESSION_ID, LEDGER_ID or GATEWAY_REF.
+          additionalProperties: { type: string }
     EventAccepted:
       type: object
       required: [event_id, txn_id, lifecycle_state, duplicate]
@@ -1502,6 +1659,82 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    SourceExpectation:
+      type: object
+      required: [stale_after_secs, down_after_secs, max_skew_secs]
+      properties:
+        source_system: { type: string }
+        stale_after_secs: { type: integer, minimum: 1 }
+        down_after_secs: { type: integer, maximum: 2592000 }
+        max_skew_secs: { type: integer, minimum: 0, maximum: 86400 }
+    SourceStatus:
+      type: object
+      required: [source_system, status, last_received_at, last_event_at, silence_secs, events, skew_p50_secs, skew_p95_secs, skew_samples, skew_exceeded]
+      properties:
+        source_system: { type: string }
+        status: { type: string, enum: [fresh, stale, down, unconfigured] }
+        expectation: { $ref: '#/components/schemas/SourceExpectation' }
+        last_received_at: { type: string, format: date-time }
+        last_event_at: { type: string, format: date-time }
+        silence_secs: { type: integer }
+        events: { type: integer }
+        skew_p50_secs: { type: number }
+        skew_p95_secs: { type: number }
+        skew_samples: { type: integer }
+        skew_exceeded: { type: boolean }
+    Observation:
+      type: object
+      required: [source_system, source_event_ref, event_type, source_ts, refs, amount_minor, currency]
+      properties:
+        source_system: { type: string }
+        source_event_ref: { type: string }
+        event_type: { type: string, example: CREDIT_CONFIRMED }
+        source_ts: { type: string, format: date-time }
+        refs:
+          type: object
+          description: Keys are RRN, STAN, SESSION_ID, LEDGER_ID or GATEWAY_REF.
+          additionalProperties: { type: string }
+        amount_minor: { type: string, description: Decimal string of minor units. }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+    CorrelationDecision:
+      type: object
+      required: [linked, confidence, duplicate]
+      properties:
+        linked: { type: boolean }
+        txn_id: { type: string, format: uuid }
+        confidence: { type: number }
+        basis: { type: array, items: { type: string } }
+        reason: { type: string }
+        unmatched_id: { type: string, format: uuid }
+        duplicate: { type: boolean }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              txn_id: { type: string, format: uuid }
+              instruction_ref: { type: string }
+              confidence: { type: number }
+              basis: { type: array, items: { type: string } }
+    EvidenceItem:
+      type: object
+      required: [id, source_system, source_event_ref, event_type, refs, amount_minor, currency, reason, status, attempts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_system: { type: string }
+        source_event_ref: { type: string }
+        event_type: { type: string }
+        refs: { type: object, additionalProperties: { type: string } }
+        amount_minor: { type: string }
+        currency: { type: string }
+        reason: { type: string }
+        candidates: { type: array, items: { type: object } }
+        status: { type: string, enum: [open, linked, discarded] }
+        linked_txn_id: { type: string, format: uuid }
+        link_method: { type: string, enum: ['', automatic, manual] }
+        confidence: { type: number }
+        attempts: { type: integer }
+        created_at: { type: string, format: date-time }
     QuarantinedEvent:
       type: object
       required: [id, source_system, reason, status, attempts, replayable, created_at]
