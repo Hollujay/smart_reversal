@@ -72,6 +72,9 @@ type run struct {
 	at      time.Time
 	held    *killswitch.FrozenError
 	resumed bool
+	// degraded caches the stale or down sources for this run (see degraded.go).
+	degraded  map[string]string
+	answering map[string][]string
 }
 
 // allowed reports whether an action may proceed. It checks the kill switch at the
@@ -188,6 +191,14 @@ func (d *Detector) evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.U
 			out = append(out, f)
 		}
 		return nil
+	}
+
+	// A transaction with a final answer has nothing left to wait for.
+	switch t.Lifecycle {
+	case txn.StateConfirmedSuccess, txn.StateConfirmedFailure, txn.StateReversed:
+		if err := d.release(ctx, tx, tenant, t.ID, cases.CodeUnknown); err != nil {
+			return nil, err
+		}
 	}
 
 	switch t.Lifecycle {
@@ -399,6 +410,7 @@ func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, e
 	// The case belongs to the later of each pair, so a duplicate is flagged once,
 	// whichever of the two is seen first.
 	var result Finding
+	heldPair := ""
 	for _, o := range others {
 		later, earlier := t, o
 		if o.FirstDebitAt.After(*t.FirstDebitAt) || (o.FirstDebitAt.Equal(*t.FirstDebitAt) && o.ID.String() > t.ID.String()) {
@@ -406,6 +418,17 @@ func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, e
 		}
 		if earlier.CreditStatus == txn.CreditFailed {
 			continue // a retry after a confirmed failure
+		}
+		// The earlier attempt may have failed already without our knowing, if a source
+		// it depends on is not reporting. Judging the pair now could call a retry a
+		// duplicate. Hold it and look again when the source is back.
+		if earlier.CreditStatus != txn.CreditConfirmed {
+			if why, err := d.whyHeld(ctx, tx, tenant, ec, earlier.ID); err != nil {
+				return Finding{}, err
+			} else if why != "" {
+				heldPair = why
+				continue
+			}
 		}
 		risk := "MEDIUM"
 		if later.SessionID != "" && later.SessionID == earlier.SessionID {
@@ -431,6 +454,13 @@ func (d *Detector) duplicate(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, e
 		if f.Created || result.Case.ID == uuid.Nil {
 			result = f
 		}
+	}
+	if heldPair != "" {
+		if err := d.hold(ctx, tx, tenant, t.ID, cases.CodeDuplicate, heldPair); err != nil {
+			return Finding{}, err
+		}
+	} else if err := d.release(ctx, tx, tenant, t.ID, cases.CodeDuplicate); err != nil {
+		return Finding{}, err
 	}
 	return result, nil
 }
@@ -492,6 +522,7 @@ func (d *Detector) SweepStuck(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) 
 	}
 
 	var out []Finding
+	shared := &run{at: d.now()}
 	for _, t := range stuck {
 		v, err := d.Config.Effective(ctx, tx, tenant, "waiting_threshold_seconds."+t.Rail, d.now())
 		if errors.Is(err, configsvc.ErrNotConfigured) || errors.Is(err, configsvc.ErrUnknownKey) {
@@ -502,6 +533,19 @@ func (d *Detector) SweepStuck(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) 
 		}
 		if d.now().Sub(t.LastEventAt) < time.Duration(v.Value)*time.Second {
 			continue
+		}
+		// If a source this transaction depends on is not reporting, its silence says
+		// nothing about the transaction yet.
+		if why, err := d.whyHeld(ctx, tx, tenant, shared, t.ID); err != nil {
+			return nil, err
+		} else if why != "" {
+			if err := d.hold(ctx, tx, tenant, t.ID, cases.CodeUnknown, why); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if err := d.release(ctx, tx, tenant, t.ID, cases.CodeUnknown); err != nil {
+			return nil, err
 		}
 		ev, err := d.evidence(ctx, tx, tenant, t.ID)
 		if err != nil {
@@ -564,6 +608,15 @@ func (d *Detector) SweepAll(ctx context.Context, pool *db.Pool) (int, error) {
 				return err
 			}
 			fs = append(fs, rf...)
+			hf, err := d.SweepHolds(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			fs = append(fs, hf...)
+			held, err := OpenHolds(ctx, tx, t)
+			if err != nil {
+				return err
+			}
 			n := 0
 			for _, f := range fs {
 				if f.Created {
@@ -571,7 +624,7 @@ func (d *Detector) SweepAll(ctx context.Context, pool *db.Pool) (int, error) {
 					n++
 				}
 			}
-			return automation.RecordJob(ctx, tx, t, automation.JobDetectorSweep, false, frozen, map[string]any{"opened": n})
+			return automation.RecordJob(ctx, tx, t, automation.JobDetectorSweep, false, frozen, map[string]any{"opened": n, "held_for_degraded_source": held})
 		})
 		if err != nil {
 			return opened, fmt.Errorf("detect: sweep tenant %s: %w", t, err)
