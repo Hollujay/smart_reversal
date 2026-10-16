@@ -61,7 +61,7 @@ type Parser interface {
 
 var (
 	accountRun = regexp.MustCompile(`\d{10,}`)
-	amountRe   = regexp.MustCompile(`(?i)(?:NGN|NAIRA|N|₦)\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)`)
+	amountRe   = regexp.MustCompile(`(?i)(?:\bNGN|\bNAIRA|\bN|₦)\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)`)
 	tailRe     = regexp.MustCompile(`(?i)(?:\*{2,}|x{2,}|\.{3,}|#)\s?(\d{4})\b`)
 	refRe      = regexp.MustCompile(`(?i)\b(?:ref(?:erence)?|session(?:\s?id)?|rrn|stan)\s*[:#=-]?\s*([A-Za-z0-9]{6,40})`)
 	narrRe     = regexp.MustCompile(`(?i)\b(?:desc(?:ription)?|narration|narr|remark)\s*[:=-]\s*([^|;\n]{3,80})`)

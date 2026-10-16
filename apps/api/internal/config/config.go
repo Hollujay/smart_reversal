@@ -81,6 +81,9 @@ type Config struct {
 	// customers. It is refused in production, where a real identity provider is
 	// required.
 	CustomerDevLoginEnabled bool
+	// OwnBankNames are names that identify this bank in an alert, comma separated in
+	// OWN_BANK_NAMES. They let the alert parser tell another bank's alert from ours.
+	OwnBankNames []string
 }
 
 // Load reads configuration from the process environment.
@@ -129,6 +132,7 @@ func LoadFrom(lookup func(string) (string, bool)) (*Config, error) {
 
 		FinancialExecutionEnabled: l.boolean("FINANCIAL_EXECUTION_ENABLED", false),
 		CustomerDevLoginEnabled:   l.boolean("CUSTOMER_DEV_LOGIN_ENABLED", false),
+		OwnBankNames:              splitList(l.str("OWN_BANK_NAMES", "")),
 	}
 
 	c.validate(l)
@@ -293,4 +297,15 @@ func (l *loader) boolean(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// splitList splits a comma separated value, dropping blanks.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

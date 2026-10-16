@@ -154,10 +154,13 @@ type Case struct {
 	RegulatoryClock string
 	OpenedAt        time.Time
 	SLADueAt        *time.Time
-	ResolvedAt      *time.Time
-	ClosedReason    string
-	Complaint       json.RawMessage
-	Version         int
+	// InternalTargetAt is the bank's own target, kept apart from the regulatory
+	// deadline in SLADueAt. Nil when none was set.
+	InternalTargetAt *time.Time
+	ResolvedAt       *time.Time
+	ClosedReason     string
+	Complaint        json.RawMessage
+	Version          int
 }
 
 // Evidence is something that supports a case.
@@ -194,14 +197,19 @@ type OpenInput struct {
 	ExposureMinor  *int64
 	Currency       string
 	Rail           string // used to pick the regulatory clock
-	RootCause      string
-	RuleID         string
-	RuleVersion    string
-	Explanation    string
-	Evidence       []Evidence
-	Complaint      json.RawMessage
-	Actor          Actor
-	At             time.Time // when the trigger happened; defaults to now
+	// Clock names the regulatory clock explicitly (the deadline engine's choice for a
+	// customer dispute). When empty the clock is picked from the code and the rail.
+	Clock string
+	// InternalTargetAt is the bank's own target, when one is known.
+	InternalTargetAt *time.Time
+	RootCause        string
+	RuleID           string
+	RuleVersion      string
+	Explanation      string
+	Evidence         []Evidence
+	Complaint        json.RawMessage
+	Actor            Actor
+	At               time.Time // when the trigger happened; defaults to now
 }
 
 // Service creates and changes cases.
@@ -317,14 +325,14 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, a Acto
 }
 
 const caseColumns = `id, case_ref, classification, status, priority, risk_grade, source, txn_id, exposure_minor, coalesce(currency, ''),
-	root_cause, owner_id, queue, rule_id, rule_version, regulatory_clock, opened_at, sla_due_at, resolved_at, closed_reason, complaint, version`
+	root_cause, owner_id, queue, rule_id, rule_version, regulatory_clock, opened_at, sla_due_at, resolved_at, closed_reason, complaint, version, internal_target_at`
 
 func scanCase(row pgx.Row) (Case, error) {
 	var c Case
 	var complaint []byte
 	if err := row.Scan(&c.ID, &c.Ref, &c.Classification, &c.Status, &c.Priority, &c.RiskGrade, &c.Source, &c.TxnID, &c.ExposureMinor,
 		&c.Currency, &c.RootCause, &c.OwnerID, &c.Queue, &c.RuleID, &c.RuleVersion, &c.RegulatoryClock, &c.OpenedAt, &c.SLADueAt,
-		&c.ResolvedAt, &c.ClosedReason, &complaint, &c.Version); err != nil {
+		&c.ResolvedAt, &c.ClosedReason, &complaint, &c.Version, &c.InternalTargetAt); err != nil {
 		return Case{}, err
 	}
 	if complaint != nil {
@@ -368,7 +376,11 @@ func (s *Service) Open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, in Open
 		}
 	}
 
-	clock, due, err := s.deadline(ctx, tx, tenant, clockFor(in.Classification, in.Rail), opened)
+	wanted := in.Clock
+	if wanted == "" {
+		wanted = clockFor(in.Classification, in.Rail)
+	}
+	clock, due, err := s.deadline(ctx, tx, tenant, wanted, opened)
 	if err != nil {
 		return Case{}, false, err
 	}
@@ -386,10 +398,10 @@ func (s *Service) Open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, in Open
 	id := uuid.New()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO cases (tenant_id, id, case_ref, classification, status, priority, risk_grade, source, txn_id, exposure_minor, currency,
-			root_cause, rule_id, rule_version, regulatory_clock, opened_at, sla_due_at, complaint)
-		VALUES ($1,$2,$3,$4,'DETECTED',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+			root_cause, rule_id, rule_version, regulatory_clock, opened_at, sla_due_at, complaint, internal_target_at)
+		VALUES ($1,$2,$3,$4,'DETECTED',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		tenant, id, ref, in.Classification, priorityFor(in.Classification, in.RiskGrade), in.RiskGrade, in.Source, in.TxnID, in.ExposureMinor,
-		currency, in.RootCause, in.RuleID, in.RuleVersion, clock, opened, due, nullJSON(in.Complaint))
+		currency, in.RootCause, in.RuleID, in.RuleVersion, clock, opened, due, nullJSON(in.Complaint), in.InternalTargetAt)
 	if err != nil {
 		return Case{}, false, fmt.Errorf("cases: insert: %w", err)
 	}

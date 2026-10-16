@@ -162,3 +162,18 @@ func TestAmountsAreExact(t *testing.T) {
 		}
 	}
 }
+
+func TestTheLetterNInsideAWordIsNeverACurrencyMarker(t *testing.T) {
+	// "on 2026-10-14" contains an n followed by a space and digits; it is not an amount.
+	p := parse(t, "Wema Alert: Acct ****6789 debited NGN 25,000.00 on 2026-10-14 09:12. Desc: NIP TRANSFER | Ref: NIP202610140912")
+	if f := p.Fields["amount_minor"]; f.Value != "2500000" || f.Confidence < 0.9 || len(p.Flags) != 0 {
+		t.Fatalf("%+v %v", f, p.Flags)
+	}
+	// A standalone N is still the naira sign.
+	if q := parse(t, "Acct ****6789 debited N 1,200.00 at 2026-10-14 09:12"); q.Fields["amount_minor"].Value != "120000" {
+		t.Fatalf("%+v", q.Fields["amount_minor"])
+	}
+	if r := parse(t, "Debit of ₦300 on acct ****6789 at 2026-10-14 09:12"); r.Fields["amount_minor"].Value != "30000" {
+		t.Fatalf("%+v", r.Fields["amount_minor"])
+	}
+}

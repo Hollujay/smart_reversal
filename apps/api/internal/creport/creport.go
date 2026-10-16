@@ -34,8 +34,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/alertparse"
+	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
+	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -75,7 +77,10 @@ type Service struct {
 	Pool   *db.Pool
 	Parser alertparse.Parser
 	Config *configsvc.Service
-	Now    func() time.Time
+	// Cases and Deadlines are needed to draft and submit.
+	Cases     *cases.Service
+	Deadlines *deadline.Engine
+	Now       func() time.Time
 }
 
 func (s *Service) now() time.Time {

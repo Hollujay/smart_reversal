@@ -15,6 +15,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/correlate"
+	"github.com/smartreversal/smartreversal/apps/api/internal/creport"
 	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
@@ -46,6 +47,8 @@ type Services struct {
 	// CustomerLogin enables the ReverseIt customer routes under /v1/customer. Nil
 	// leaves them out entirely.
 	CustomerLogin *customer.Login
+	// Reports enables the customer report routes (needs CustomerLogin).
+	Reports *creport.Service
 	// Rules enables the /v1/rules routes. Nil leaves them out.
 	Rules *rules.Engine
 	// Redis, when set, lets GET /v1/pipeline report stream backlog. Nil is allowed:

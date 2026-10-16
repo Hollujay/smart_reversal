@@ -19,6 +19,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
+	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
@@ -60,7 +61,8 @@ func newRig(t *testing.T) *rig {
 	r.cfg = &configsvc.Service{Audit: app, Now: clk}
 	r.cases = &cases.Service{Audit: app, Config: r.cfg, Now: clk}
 	r.ing = &txn.Service{Now: clk}
-	r.svc = &Service{Pool: pool, Config: r.cfg, Now: clk, Parser: &alertparse.RuleParser{OwnNames: []string{"Wema"}, Now: clk}}
+	r.svc = &Service{Pool: pool, Config: r.cfg, Now: clk, Cases: r.cases, Deadlines: &deadline.Engine{Config: r.cfg, Now: clk},
+		Parser: &alertparse.RuleParser{OwnNames: []string{"Wema"}, Now: clk}}
 	cs := &customer.Store{Pool: pool}
 	var err error
 	if r.alice, err = cs.Create(context.Background(), r.tenant, "Alice", "synthetic customer passphrase"); err != nil {
