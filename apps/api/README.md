@@ -26,6 +26,6 @@ Modular monolith. Four binaries share `internal/` and one PostgreSQL database.
 | `internal/observability` | Structured logging, trace ids |
 | `internal/contract` | Tests tying code to `packages/api-contracts` |
 | `internal/auth` | **Not usable.** Login is disabled. Replaced in B1 |
-| `internal/audit`, `internal/transactions`, `internal/exceptions` | In-memory prototypes, not wired. Replaced in later phases |
+| `internal/audit` | In-memory prototype, not wired |
 
 See `docs/backend/local-setup.md` to run it and `docs/architecture/c4.md` for the diagrams.

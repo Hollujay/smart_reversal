@@ -36,3 +36,9 @@ A lapse or invalidation sets the reversal's approval status to `EXPIRED`, writes
 - A lapse is not yet escalated or reported if nobody renews it (B7).
 - The authority basis compares configuration versions, not meaning: a new version with an identical value still invalidates, which errs on the safe side.
 - There is no limit on how many times an approval can be renewed.
+
+## Policy tightened after an automatic reversal was recorded
+
+A reversal that policy let automation submit has no approval to fall back on. If, before it is submitted, the gate says a person must now approve it (for example automatic eligibility for the exception type was switched off, or the amount limit was lowered), the submission does not go out. The reversal becomes `PENDING` with a new approval whose maker is the system, the case moves to awaiting approval, and a case event (`approval_now_required`), an operations alert and an audit record (`reversal.escalated_to_approval`) are written once. Any authorised checker who is not otherwise conflicted can then approve it in the usual way. The caller sees `409 APPROVAL_INVALIDATED`; no new error code was added.
+
+The other direction does not remove a human step. A reversal that is `PENDING` stays pending when policy is loosened: the sweep and the automatic path ignore reversals awaiting approval, and `Execute` refuses them. Only a reversal that a person already approved, whose approval is still valid, continues when policy now allows automation, and the gate is evaluated again at that moment.
