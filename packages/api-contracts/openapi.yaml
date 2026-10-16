@@ -1338,6 +1338,75 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/customer/reports/{id}/feedback:
+    post:
+      tags: [Customer]
+      operationId: customerFeedback
+      summary: Say whether the report helped, or that the value was not received
+      description: |
+        Needs Idempotency-Key and a submitted report (409 NOT_READY otherwise). Saying the
+        value was not received (`disputes_outcome`) adds a note while the case is open and
+        reopens it once it is closed. Reopening changes no financial fact and creates no
+        reversal; any further remediation goes through the same eight-check gate.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { helpful: { type: boolean }, comment: { type: string, maxLength: 1000 }, disputes_outcome: { type: boolean } } }
+      responses:
+        '200': { description: Seen before., content: { application/json: { schema: { type: object } } } }
+        '201': { description: Recorded., content: { application/json: { schema: { type: object, required: [id, reopened, case_ref, message], properties: { id: { type: string, format: uuid }, reopened: { type: boolean }, case_ref: { type: string }, message: { type: string } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/labeled-examples:
+    get:
+      tags: [Detection]
+      operationId: listLabeledExamples
+      summary: Labelled examples from cases the detector missed
+      description: |
+        Needs the `view_exception_queue` grant with `full` scope. `status` is pending
+        (default), confirmed, rejected or superseded. Only confirmed examples may feed
+        training or rule tuning.
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, confirmed, rejected, superseded] } }
+      responses:
+        '200': { description: Examples., content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/labeled-examples/{id}/decision:
+    post:
+      tags: [Detection]
+      operationId: decideLabeledExample
+      summary: Confirm or reject a pending example
+      description: |
+        Needs the `approve` scope of `change_rules` and MFA. Whoever closed the case may
+        not confirm its label (403 SELF_APPROVAL). A rejection needs a note. The decision
+        is a new version; the pending one is kept as superseded. Audited.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [confirm], properties: { confirm: { type: boolean }, note: { type: string } } }
+      responses:
+        '200': { description: The new version., content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/review-items:
     get:
       tags: [Reversals]

@@ -23,6 +23,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
 	"github.com/smartreversal/smartreversal/apps/api/internal/escalation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
+	"github.com/smartreversal/smartreversal/apps/api/internal/labels"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -352,4 +353,113 @@ func TestACustomerSeesTheirOwnCasesIncludingOnesTheBankFoundAndNobodyElses(t *te
 	if v := esc(); v.Due || len(v.Steps) != 0 {
 		t.Fatalf("a resolved case still shows the ladder: %+v", v)
 	}
+}
+
+func (r *reportRig) opMFA(t *testing.T, roles ...string) string {
+	t.Helper()
+	tok, _, err := r.signer.Issue(identity.Principal{UserID: uuid.New(), TenantID: r.tenant, Roles: roles, MFA: true}, identity.AudienceOps, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+func TestFeedbackOverHTTPAndLabelledExamplesFromMissedCases(t *testing.T) {
+	r := newReportRig(t)
+	app := r.appender
+	// Close hook as the API wires it.
+	svcCases := &cases.Service{Audit: app, OnClose: labels.OnClose}
+	r.handler = rebuild(t, r, svcCases)
+
+	at := time.Now().Add(-time.Hour).UTC().Truncate(time.Minute)
+	r.transfer(t, tokA, "NIP202610140777", 777700, at, "DEBIT_POSTED", "TRANSFER_SENT", "CREDIT_FAILED")
+	body, _ := json.Marshal(map[string]any{"text": "Wema Alert: Acct 0123456789 debited NGN 7,777.00 on " + at.In(time.FixedZone("WAT", 3600)).Format("2006-01-02 15:04") + ". Ref: NIP202610140777", "consent": true, "consent_version": "v1"})
+	var rep creport.Report
+	_ = json.Unmarshal(r.post("/v1/customer/reports", string(body), r.aliceT, "rep-fb-http-1").Body.Bytes(), &rep)
+	path := "/v1/customer/reports/" + rep.ID.String()
+	if rec := r.post(path+"/feedback", `{"helpful":true}`, r.aliceT, "fb-http-0001"); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "NOT_READY") {
+		t.Fatalf("before submission: %d %s", rec.Code, rec.Body.String())
+	}
+	confirm := `{"amount_minor":777700,"occurred_at":"` + at.Format(time.RFC3339) + `","account_tail":"6789","reference":"NIP202610140777"}`
+	if rec := r.post(path+"/confirm", confirm, r.aliceT, ""); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var sub creport.Submitted
+	_ = json.Unmarshal(r.post(path+"/complaint", `{}`, r.aliceT, "").Body.Bytes(), &sub)
+	if sub.CaseRef == "" {
+		t.Fatal("not submitted")
+	}
+	if rec := r.post(path+"/feedback", `{"helpful":true,"comment":"Thanks"}`, r.aliceT, ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no key: %d", rec.Code)
+	}
+	if rec := r.post(path+"/feedback", `{"helpful":true,"comment":"Thanks"}`, r.aliceT, "fb-http-0002"); rec.Code != http.StatusCreated {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := r.post(path+"/feedback", `{"helpful":true,"comment":"Thanks"}`, r.aliceT, "fb-http-0002"); rec.Code != http.StatusOK {
+		t.Fatalf("repeat: %d", rec.Code)
+	}
+	if rec := r.post(path+"/feedback", `{"helpful":true}`, r.bobT, "fb-http-0003"); rec.Code != http.StatusNotFound {
+		t.Fatalf("another customer: %d", rec.Code)
+	}
+	if rec := r.post(path+"/feedback", `{}`, r.aliceT, "fb-http-0004"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("nothing said: %d", rec.Code)
+	}
+
+	// Operations close the customer-reported case (the detector never raised it), which records a pending label.
+	var caseID uuid.UUID
+	_ = r.pool.QueryRow(context.Background(), `SELECT id FROM cases WHERE case_ref = $1`, sub.CaseRef).Scan(&caseID)
+	closer := uuid.New()
+	_ = r.pool.WithTenant(context.Background(), r.tenant, func(tx pgx.Tx) error {
+		for _, to := range []string{cases.StUnderInvestigation, cases.StClosedNoException} {
+			if _, err := svcCases.Transition(context.Background(), tx, r.tenant, caseID, cases.Actor{Type: audit.ActorUser, ID: closer}, to, 0, "CHECKED"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	analyst := r.token(t, r.tenant, uuid.New(), "TXN_ANALYST")
+	rec := serve(r.handler, newReq("GET", "/v1/labeled-examples", "", analyst))
+	var list struct{ Items []labels.Example }
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if rec.Code != http.StatusOK || len(list.Items) != 1 || list.Items[0].Status != "pending" {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serve(r.handler, newReq("GET", "/v1/labeled-examples", "", r.aliceT)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a customer saw labels: %d", rec.Code)
+	}
+	id := list.Items[0].ID.String()
+	d := `{"confirm":true,"note":"root cause clear"}`
+	if rec := r.post("/v1/labeled-examples/"+id+"/decision", d, analyst, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("an analyst decided: %d", rec.Code)
+	}
+	if rec := r.post("/v1/labeled-examples/"+id+"/decision", d, r.token(t, r.tenant, uuid.New(), "RISK_COMPLIANCE"), ""); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "MFA_REQUIRED") {
+		t.Fatalf("no MFA: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := r.post("/v1/labeled-examples/"+id+"/decision", d, r.opMFA(t, "RISK_COMPLIANCE"), ""); rec.Code != http.StatusOK {
+		t.Fatalf("decide: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := r.post("/v1/labeled-examples/"+id+"/decision", d, r.opMFA(t, "RISK_COMPLIANCE"), ""); rec.Code != http.StatusNotFound && rec.Code != http.StatusConflict {
+		t.Fatalf("the superseded version was decided again: %d", rec.Code)
+	}
+	rec = serve(r.handler, newReq("GET", "/v1/labeled-examples?status=confirmed", "", analyst))
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Items) != 1 || list.Items[0].Version != 2 {
+		t.Fatalf("%s", rec.Body.String())
+	}
+}
+
+// rebuild returns a router like the rig's but whose case service has the close hook.
+func rebuild(t *testing.T, r *reportRig, cs *cases.Service) http.Handler {
+	t.Helper()
+	policy, err := authz.Load(context.Background(), r.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks, _ := identity.ParseKeySet("", map[string]ed25519.PublicKey{"k1": r.signer.PublicKey()})
+	cfg := &configsvc.Service{Audit: r.appender}
+	logger, _ := quietLogger()
+	svc := &Services{Pool: r.pool, Policy: policy, Audit: r.appender, Config: cfg, Txn: &txn.Service{}, Cases: cs,
+		CustomerLogin: &customer.Login{Provider: &customer.DevProvider{Pool: r.pool, Audit: r.appender}, Signer: r.signer},
+		Reports:       &creport.Service{Pool: r.pool, Config: cfg, Cases: cs, Deadlines: &deadline.Engine{Config: cfg}, Parser: &alertparse.RuleParser{OwnNames: []string{"Wema"}}}}
+	return NewRouter(Options{Logger: logger, Verifier: identity.NewVerifier(ks, nil), Services: svc})
 }

@@ -97,6 +97,7 @@ func NewRouter(o Options) http.Handler {
 					cr.Get("/reports/{id}/deadline", o.Services.customerReportDeadline)
 					cr.Put("/reports/{id}/complaint", o.Services.editCustomerComplaint)
 					cr.Post("/reports/{id}/complaint", o.Services.submitCustomerComplaint)
+					cr.Post("/reports/{id}/feedback", o.Services.customerFeedback)
 				}
 			})
 		}
@@ -126,6 +127,10 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/quarantine", o.Services.listQuarantine)
 					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
 					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
+				}
+				if o.Services.Cases != nil {
+					pr.Get("/labeled-examples", o.Services.listLabeledExamples)
+					pr.Post("/labeled-examples/{id}/decision", o.Services.decideLabeledExample)
 				}
 				if o.Services.Rules != nil {
 					pr.Get("/rules", o.Services.listRules)
