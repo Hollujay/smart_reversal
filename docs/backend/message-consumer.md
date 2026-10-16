@@ -26,3 +26,7 @@ The same fields the outbox relay writes:
 
 - Per-source authentication of stream writers is not implemented.
 - No bound on stream length or consumer lag is enforced yet.
+
+## Backlog and lag
+
+`GET /v1/pipeline` (grant `manage_ingestion`, no MFA to view) reports, for the caller's institution, the unpublished outbox rows, how many have already failed, and the age of the oldest. For the shared platform it reports each stream's length, dead-letter count, and per group the consumers, pending entries and lag. It states numbers and no verdict, because what counts as too much depends on volumes nobody has measured yet. `redis_available` false means Redis was not reachable and says nothing about the streams. The API opens its Redis client lazily, so an unreachable Redis never stops it.
