@@ -110,7 +110,8 @@ func run() error {
 	configService := &configsvc.Service{Audit: appender}
 	killService := &killswitch.Service{Audit: appender}
 	txnService := &txn.Service{}
-	caseService := &cases.Service{Audit: appender, Config: configService, OnClose: labels.OnClose}
+	routingService := &routing.Service{Audit: appender}
+	caseService := &cases.Service{Audit: appender, Config: configService, Routing: routingService, OnClose: labels.OnClose}
 	// Execution is simulated: the sources below are the synthetic ones. No real
 	// provider adapter exists in this build.
 	var customerLogin *customer.Login
@@ -118,7 +119,7 @@ func run() error {
 		customerLogin = &customer.Login{Provider: &customer.DevProvider{Pool: pool, Audit: appender}, Signer: signer}
 	}
 	reports := &creport.Service{Pool: pool, Config: configService, Cases: caseService, Deadlines: &deadline.Engine{Config: configService}, Parser: &alertparse.RuleParser{OwnNames: cfg.OwnBankNames}}
-	alertService := &alerts.Service{Routing: &routing.Service{Audit: appender}, Config: configService, Audit: appender}
+	alertService := &alerts.Service{Routing: routingService, Config: configService, Audit: appender}
 	incidentService := &incidents.Service{Config: configService, Alerts: alertService, Audit: appender}
 	reversalService := &reversal.Service{Pool: pool, Config: configService, Kill: killService, Cases: caseService, Audit: appender, Txn: txnService,
 		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
@@ -134,7 +135,7 @@ func run() error {
 			Signer:   signer,
 			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
-		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, Alerts: alertService, Incidents: incidentService, CustomerLogin: customerLogin, Reports: reports, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService},
+		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, Alerts: alertService, Incidents: incidentService, CustomerLogin: customerLogin, Reports: reports, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService, Routing: routingService, Reconciliation: &reconciliation.Service{Pool: pool, Cases: caseService}},
 		ServiceVerifier: &servauth.Verifier{Pool: pool},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{

@@ -218,6 +218,8 @@ type Service struct {
 	Audit  *audit.Appender
 	Config *configsvc.Service
 	Now    func() time.Time
+	// Routing, when set, sends an assignment on to an active delegate.
+	Routing *routing.Service
 	// OnClose, when set, is called inside the transition's transaction after a case
 	// reaches a terminal status. It must not change the case. An error stops the
 	// transition.

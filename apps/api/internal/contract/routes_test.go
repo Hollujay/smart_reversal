@@ -39,7 +39,7 @@ func routerOperations(t *testing.T) map[string]bool {
 		// A non-nil authenticator mounts the login route.
 		Auth: &identity.Authenticator{},
 		// Non-nil services mount the routes that need a database and a policy.
-		Services:        &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}, Config: &configsvc.Service{}, KillSwitch: &killswitch.Service{}, Txn: &txn.Service{}, Feed: &feed.Importer{}, Correlate: &correlate.Matcher{}, CustomerLogin: &customer.Login{}, Reports: &creport.Service{}, Rules: &rules.Engine{}, Cases: &cases.Service{}, Reversal: &reversal.Service{}, Alerts: &alerts.Service{}, Incidents: &incidents.Service{}},
+		Services:        &server.Services{Pool: &db.Pool{}, Policy: &authz.Policy{}, Audit: &audit.Appender{}, Vault: &datashield.Vault{}, Config: &configsvc.Service{}, KillSwitch: &killswitch.Service{}, Txn: &txn.Service{}, Feed: &feed.Importer{}, Correlate: &correlate.Matcher{}, CustomerLogin: &customer.Login{}, Reports: &creport.Service{}, Rules: &rules.Engine{}, Cases: &cases.Service{}, Reversal: &reversal.Service{}, Alerts: &alerts.Service{}, Incidents: &incidents.Service{}, Reconciliation: &reconciliation.Service{}},
 		ServiceVerifier: &servauth.Verifier{},
 	})
 	routes, ok := h.(chi.Routes)
