@@ -186,3 +186,7 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 ## Test results at this gate (develop at 2883eff, 16 Oct 2026)
 
 `go test -p 1 -race -count=1 ./...` against local Postgres 16 and Redis: 726 tests passed, 2 failed, 12 packages skipped, 46 passed. The 2 failures were in `internal/authz`: tests written before the `manage_ingestion` capability (migration 0023) did not count its two grants or its MFA flag. Fixed in the test only; `internal/authz` then passed. The full suite was not re-run after that fix. Not run in this pass: demo replay against `sr_demo`.
+
+## Migration numbering after PR #19
+
+Develop carried 0029 to 0035 (customers, customer reports, internal target, escalation steps, feedback and labels, alerts, incidents) before PR #19 merged, and any database built from develop has those applied. PR #19 brought two migrations numbered 0029 (reconciliation) and 0030 (reversal recovery) that collided with them, and the runner, which keys on the version number and refuses two names for one version, could not load either. They are now 0036_reconciliation and 0037_reversal_recovery, so applied history on develop databases is untouched and the new ones apply as ordinary forward migrations. A database built only from PR #19's own branch has them recorded as 0029 and 0030; that is a development database and must be recreated (or its `schema_migrations` rows 0029 and 0030 corrected by hand) before it can run develop.
