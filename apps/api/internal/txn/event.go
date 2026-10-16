@@ -36,6 +36,9 @@ var eventTypes = map[string]bool{
 	EvTransferTimeout: true, EvSettlementCompleted: true, EvReversalPosted: true,
 }
 
+// KnownEventType reports whether t is a canonical event type.
+func KnownEventType(t string) bool { return eventTypes[t] }
+
 var channels = map[string]bool{
 	"MOBILE": true, "INTERNET": true, "USSD": true, "POS": true, "ATM": true,
 	"CARD": true, "GATEWAY": true, "MERCHANT": true, "API": true,
@@ -121,7 +124,15 @@ type Envelope struct {
 	EventType      string    `json:"event_type"`
 	SourceTS       time.Time `json:"source_ts"`
 	Txn            Core      `json:"txn"`
+	// Refs are external references that let evidence from other sources be matched
+	// to this transaction. Keys are RefTypes.
+	Refs map[string]string `json:"refs,omitempty"`
 }
+
+// RefTypes are the external reference kinds accepted.
+var RefTypes = map[string]bool{"RRN": true, "STAN": true, "SESSION_ID": true, "LEDGER_ID": true, "GATEWAY_REF": true}
+
+var refValueRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
 // ErrInvalid wraps every validation failure.
 var ErrInvalid = errors.New("txn: invalid event")
@@ -163,6 +174,16 @@ func (e *Envelope) Validate(now time.Time) error {
 		return bad("txn.beneficiary_bank contains unsupported characters")
 	case !sessionRe.MatchString(e.Txn.SessionID):
 		return bad("txn.session_id contains unsupported characters")
+	case len(e.Refs) > len(RefTypes):
+		return bad("too many refs")
+	}
+	for k, v := range e.Refs {
+		if !RefTypes[k] {
+			return bad("refs.%s is not a known reference type", k)
+		}
+		if !refValueRe.MatchString(v) {
+			return bad("refs.%s contains unsupported characters", k)
+		}
 	}
 	return nil
 }

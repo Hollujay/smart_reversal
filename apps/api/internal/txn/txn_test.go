@@ -397,3 +397,115 @@ func TestInvalidEventsAreQuarantinedNotStored(t *testing.T) {
 		t.Fatalf("quarantined %d, transactions %d", q, txns)
 	}
 }
+
+// ---- external references ---------------------------------------------------
+
+func (r *rig) refs(t *testing.T, ref string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := r.pool.WithTenant(context.Background(), r.tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), `SELECT ref_type, ref_value FROM transaction_refs r JOIN transactions t ON t.tenant_id = r.tenant_id AND t.id = r.txn_id WHERE t.instruction_ref = $1`, ref)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				return err
+			}
+			out[k] = v
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestExternalReferencesAreRecordedWithTheTransaction(t *testing.T) {
+	r := newRig(t)
+	e := env("INS-R001", EvDebitPosted, "EV-R1", t0)
+	e.Refs = map[string]string{"RRN": "RRN000000777", "STAN": "000777"}
+	if _, err := r.ingest(t, e); err != nil {
+		t.Fatal(err)
+	}
+	later := env("INS-R001", EvTransferSent, "EV-R2", t0.Add(time.Second))
+	later.Refs = map[string]string{"GATEWAY_REF": "GW-777"}
+	if _, err := r.ingest(t, later); err != nil {
+		t.Fatal(err)
+	}
+	got := r.refs(t, "INS-R001")
+	want := map[string]string{"RRN": "RRN000000777", "STAN": "000777", "GATEWAY_REF": "GW-777", "SESSION_ID": "SESS-INS-R001"}
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	// A repeat adds nothing.
+	if _, err := r.ingest(t, e); err != nil || len(r.refs(t, "INS-R001")) != 4 {
+		t.Fatalf("%v %v", err, r.refs(t, "INS-R001"))
+	}
+}
+
+func TestReferencesAreValidatedAndPartOfTheEventsIdentity(t *testing.T) {
+	good := env("INS-R002", EvDebitPosted, "EV-R3", t0)
+	good.Refs = map[string]string{"RRN": "RRN1"}
+	if err := good.Validate(t0); err != nil {
+		t.Fatal(err)
+	}
+	for name, refs := range map[string]map[string]string{
+		"unknown type": {"PAN": "4111"}, "empty value": {"RRN": ""}, "odd characters": {"RRN": "a b"}, "too long": {"RRN": string(make([]byte, 65))},
+	} {
+		e := good
+		e.Refs = refs
+		if err := e.Validate(t0); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	other := good
+	other.Refs = map[string]string{"RRN": "RRN2"}
+	if good.Hash() == other.Hash() {
+		t.Fatal("different references hashed the same")
+	}
+	none := env("INS-R002", EvDebitPosted, "EV-R3", t0)
+	if none.Hash() == good.Hash() {
+		t.Fatal("an event with references hashed like one without")
+	}
+}
+
+func TestTheSameEventDeliveredConcurrentlyIsStoredOnceAndReportedAsADuplicate(t *testing.T) {
+	r := newRig(t)
+	e := env("INS-R003", EvDebitPosted, "EV-R9", t0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	accepted, dup := 0, 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := r.ingest(t, e)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				t.Error(err)
+			case res.Outcome == Accepted:
+				accepted++
+			default:
+				dup++
+			}
+		}()
+	}
+	wg.Wait()
+	if accepted != 1 || dup != 7 {
+		t.Fatalf("accepted=%d duplicate=%d", accepted, dup)
+	}
+	if _, _, n := r.row(t, "INS-R003"); n != 1 || r.outboxCount(t) != 1 {
+		t.Fatalf("events=%d outbox=%d", n, r.outboxCount(t))
+	}
+}
