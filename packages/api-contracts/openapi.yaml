@@ -1196,6 +1196,98 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/customer/reports/{id}/draft:
+    get:
+      tags: [Customer]
+      operationId: customerReportDraft
+      summary: The proposed kind of problem, the deadline it implies and the complaint text
+      description: |
+        Writes nothing. The kind of problem (`dispute_type`) is proposed from what the
+        bank knows; pass `dispute_type` to state another. The clock is chosen by a fixed
+        mapping and never by a model. An ATM report has no proposal and must say whose
+        machine it was (409 NOT_READY otherwise). `review_required` is set when a
+        person should check the choice. Complaint text is built from facts only.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: dispute_type, in: query, schema: { type: string, enum: [FAILED_TRANSFER, DUPLICATE_DEBIT, POS_WEB_FAILURE, ATM_ON_US, ATM_NOT_ON_US, WRONG_ACCOUNT_OR_AMOUNT, UNMATCHED_CLAIM] } }
+      responses:
+        '200': { description: The draft., content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/customer/reports/{id}/deadline:
+    get:
+      tags: [Customer]
+      operationId: customerReportDeadline
+      summary: The clock and countdown for a report
+      description: |
+        The regulatory deadline and the bank's own target are returned apart, each with
+        its source. The regulatory one carries the clock's registry status (confirmed,
+        reported, draft, conflicting); anything but confirmed is unverified. `state` is
+        on_track, approaching, urgent or overdue; approaching and urgent exist only when
+        percentages are approved. A clock nobody approved yields no deadline and
+        `not_configured` says which key is missing.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: dispute_type, in: query, schema: { type: string } }
+      responses:
+        '200': { description: The deadline., content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/customer/reports/{id}/complaint:
+    put:
+      tags: [Customer]
+      operationId: editCustomerComplaint
+      summary: Save the customer's own wording before submitting
+      description: The original draft is always kept beside the edit. 409 once submitted.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [text], properties: { text: { type: string, maxLength: 4000 } } }
+      responses:
+        '204': { description: Saved. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    post:
+      tags: [Customer]
+      operationId: submitCustomerComplaint
+      summary: Send the report to the bank
+      description: |
+        Opens CUS001 (or CUS002 for a wrong account or amount) on the shared queue with
+        the regulatory deadline and the internal target kept apart, or adds the report
+        to the case that already exists. The complaint and the redacted alert are
+        attached. The customer receives one acknowledgement that says nothing about
+        money, and operations are alerted. Repeating it returns the same case (200).
+        A transaction the bank shows as complete needs `disputes_verified_outcome`. An
+        alert from another bank, a duplicate report and an unresolved choice between
+        candidates cannot be submitted.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { dispute_type: { type: string }, text: { type: string, maxLength: 4000 }, disputes_verified_outcome: { type: boolean } } }
+      responses:
+        '200': { description: Already submitted., content: { application/json: { schema: { type: object } } } }
+        '201': { description: Submitted., content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/review-items:
     get:
       tags: [Reversals]

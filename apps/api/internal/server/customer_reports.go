@@ -178,3 +178,111 @@ func (s *Services) confirmCustomerReport(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, rep)
 }
+
+// customerReportDraft serves GET /v1/customer/reports/{id}/draft?dispute_type=. It
+// proposes the kind of problem, shows the deadline that implies and the complaint
+// text. It writes nothing. An ATM report must say whose machine it was.
+func (s *Services) customerReportDraft(w http.ResponseWriter, r *http.Request) {
+	p, ok := customerFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := reportID(w, r)
+	if !ok {
+		return
+	}
+	d, err := s.Reports.MakeDraft(r.Context(), p.TenantID, p.UserID, id, r.URL.Query().Get("dispute_type"))
+	if err != nil {
+		writeReportError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+// customerReportDeadline serves GET /v1/customer/reports/{id}/deadline: the clock and
+// countdown, with the regulatory deadline and the bank's own target kept apart, the
+// source of each and the registry status of the clock.
+func (s *Services) customerReportDeadline(w http.ResponseWriter, r *http.Request) {
+	p, ok := customerFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := reportID(w, r)
+	if !ok {
+		return
+	}
+	d, err := s.Reports.MakeDraft(r.Context(), p.TenantID, p.UserID, id, r.URL.Query().Get("dispute_type"))
+	if err != nil {
+		writeReportError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, d.Deadline)
+}
+
+type complaintRequestBody struct {
+	DisputeType             string `json:"dispute_type"`
+	Text                    string `json:"text"`
+	DisputesVerifiedOutcome bool   `json:"disputes_verified_outcome"`
+}
+
+// editCustomerComplaint serves PUT /v1/customer/reports/{id}/complaint: save the
+// customer's own wording before submitting. The original draft is always kept.
+func (s *Services) editCustomerComplaint(w http.ResponseWriter, r *http.Request) {
+	p, ok := customerFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := reportID(w, r)
+	if !ok {
+		return
+	}
+	var req complaintRequestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReportBody)).Decode(&req); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "the body must be a JSON object with text")
+		return
+	}
+	if err := s.Reports.SaveEdit(r.Context(), p.TenantID, p.UserID, id, req.Text); err != nil {
+		writeReportError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// submitCustomerComplaint serves POST /v1/customer/reports/{id}/complaint: send the
+// report to the bank. It opens CUS001, or CUS002 for a wrong account or amount, on the
+// shared queue, or adds the report to the case that already exists. Repeating it
+// returns the same case. 409 NOT_READY until the details are confirmed and a match chosen.
+func (s *Services) submitCustomerComplaint(w http.ResponseWriter, r *http.Request) {
+	p, ok := customerFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := reportID(w, r)
+	if !ok {
+		return
+	}
+	var req complaintRequestBody
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReportBody)).Decode(&req); err != nil {
+			httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "the body must be a JSON object")
+			return
+		}
+	}
+	out, err := s.Reports.Submit(r.Context(), p.TenantID, p.UserID, id, creport.SubmitInput{DisputeType: req.DisputeType, Text: req.Text, DisputesVerifiedOutcome: req.DisputesVerifiedOutcome})
+	if errors.Is(err, creport.ErrNotReady) {
+		httpx.WriteError(w, r, http.StatusConflict, "NOT_READY", err.Error())
+		return
+	}
+	if err != nil {
+		writeReportError(w, r, err)
+		return
+	}
+	code := http.StatusCreated
+	if !out.Created && !out.Joined {
+		code = http.StatusOK
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, code, out)
+}

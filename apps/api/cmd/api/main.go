@@ -22,6 +22,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/creport"
 	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
+	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
@@ -111,7 +112,7 @@ func run() error {
 	if cfg.CustomerDevLoginEnabled {
 		customerLogin = &customer.Login{Provider: &customer.DevProvider{Pool: pool, Audit: appender}, Signer: signer}
 	}
-	reports := &creport.Service{Pool: pool, Config: configService, Parser: &alertparse.RuleParser{OwnNames: cfg.OwnBankNames}}
+	reports := &creport.Service{Pool: pool, Config: configService, Cases: caseService, Deadlines: &deadline.Engine{Config: configService}, Parser: &alertparse.RuleParser{OwnNames: cfg.OwnBankNames}}
 	reversalService := &reversal.Service{Pool: pool, Config: configService, Kill: killService, Cases: caseService, Audit: appender, Txn: txnService,
 		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
 		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}

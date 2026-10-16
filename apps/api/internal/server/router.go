@@ -88,6 +88,10 @@ func NewRouter(o Options) http.Handler {
 					cr.Get("/reports", o.Services.listCustomerReports)
 					cr.Get("/reports/{id}", o.Services.getCustomerReport)
 					cr.Post("/reports/{id}/confirm", o.Services.confirmCustomerReport)
+					cr.Get("/reports/{id}/draft", o.Services.customerReportDraft)
+					cr.Get("/reports/{id}/deadline", o.Services.customerReportDeadline)
+					cr.Put("/reports/{id}/complaint", o.Services.editCustomerComplaint)
+					cr.Post("/reports/{id}/complaint", o.Services.submitCustomerComplaint)
 				}
 			})
 		}
