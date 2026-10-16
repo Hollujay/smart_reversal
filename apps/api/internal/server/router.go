@@ -73,6 +73,10 @@ func NewRouter(o Options) http.Handler {
 			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/feeds/{mapping}/files", o.Services.importFeedFile)
 		}
 
+		if o.ServiceVerifier != nil && o.Services.ready() && o.Services.Correlate != nil {
+			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/observations", o.Services.submitObservation)
+		}
+
 		// Everything below needs a valid operator token. Routes are added only
 		// inside this group, so a new route cannot be public by accident.
 		v1.Group(func(pr chi.Router) {
@@ -95,6 +99,11 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/quarantine", o.Services.listQuarantine)
 					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
 					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
+				}
+				if o.Services.Correlate != nil {
+					pr.Get("/evidence", o.Services.listEvidence)
+					pr.Post("/evidence/{id}/link", o.Services.linkEvidence)
+					pr.Post("/evidence/{id}/discard", o.Services.discardEvidence)
 				}
 				if o.Services.Cases != nil {
 					pr.Get("/exceptions", o.Services.listExceptions)
