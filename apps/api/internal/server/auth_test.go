@@ -189,7 +189,7 @@ func TestEveryNonPublicRouteRequiresAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen < 33 {
+	if seen < 34 {
 		t.Fatalf("walk found only %d routes", seen)
 	}
 }

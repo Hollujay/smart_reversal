@@ -14,7 +14,7 @@ import (
 // frozenFor reports the freeze that covers submitting this case's reversal, if
 // any. An error means the switch could not be read, and the caller must not act.
 func (s *Service) frozenFor(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, sub subject) (*killswitch.FrozenError, error) {
-	err := s.Kill.Check(ctx, tx, tenant, killswitch.Action{Rail: sub.Txn.Rail, ExceptionType: sub.Case.Classification})
+	err := s.Kill.Check(ctx, tx, tenant, actionFor(sub.Case.Classification, sub.Txn.Rail))
 	var fe *killswitch.FrozenError
 	switch {
 	case err == nil:
@@ -62,4 +62,15 @@ func (s *Service) unpark(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, rev R
 		return err
 	}
 	return s.auditEvent(ctx, tx, tenant, a, "reversal.resumed", rev.Ref, rev.Gate.PolicyVersion, map[string]any{"after": "unfreeze"})
+}
+
+// actionFor describes a reversal submission to the kill switch: its rail, its
+// exception type and the policy that governs it. If either part of the policy
+// identity is missing the policy is unknown, which every policy freeze covers.
+func actionFor(code, rail string) killswitch.Action {
+	id := ""
+	if code != "" && rail != "" {
+		id = PolicyID(code, rail)
+	}
+	return killswitch.Action{Rail: rail, ExceptionType: code, PolicyID: id, PolicyUnknown: id == ""}
 }

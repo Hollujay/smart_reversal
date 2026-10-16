@@ -91,7 +91,7 @@ func (r *rig) policy(t *testing.T) {
 	for k, v := range map[string]int{
 		"duplicate.window_seconds": 30, "status_query.freshness_seconds": 120, "waiting_threshold_seconds.NIP": 300,
 		"approval.auto_limit_minor": 5_000_000, "reversal.auto_eligible.FAIL001": 1, "reversal.simulated_execution_enabled": 1,
-		"approval.limit_minor.SUPERVISOR": 100_000_000, "approval.limit_minor.REVERSAL_OFFICER": 5_000_000,
+		"approval.limit_minor.SUPERVISOR": 100_000_000, "approval.validity_seconds": 3600, "approval.limit_minor.REVERSAL_OFFICER": 5_000_000,
 	} {
 		r.set(t, k, v)
 	}

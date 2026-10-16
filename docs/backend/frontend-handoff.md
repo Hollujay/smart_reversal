@@ -50,6 +50,7 @@ All bodies are JSON. IDs are UUIDs, and anywhere `{id}` appears a case reference
 | Eligibility | `GET /v1/cases/{id}/reversal-eligibility` | `{verdict, checks[{id,name,passed,detail}], ...}`. Verdicts: `PASS_AUTO`, `PASS_NEEDS_APPROVAL`, `BLOCKED` |
 | Request reversal | see below | |
 | Reversal status | `GET /v1/reversals/{id}` | `tracks.accepted / processing / financial` |
+| Renew an expired approval | `POST /v1/reversals/{id}/reapproval` `{"reason":"..."}` | `202` with the reversal back at `approval_status: PENDING`. A different checker with MFA then approves it. See `approval-expiry.md` |
 | Refresh a reversal | `POST /v1/reversals/{id}/advance` with `{}` | Safe to repeat |
 | Approval queue | `GET /v1/approvals?status=PENDING` | `{items:[{approval_id, case_ref, status, reversal:{...}}]}` |
 | Decide | see below | needs `mfa: true` |
@@ -86,7 +87,7 @@ Authorization: Bearer <supervisor token with mfa:true>
 {"decision":"approved","reason":"Checked against the statement"}
 ```
 
-`200` with the `Reversal` after execution and ledger verification (`tracks.financial: "VERIFIED"`). Rejection needs a `reason`. Errors: `403 MFA_REQUIRED`, `403 SELF_APPROVAL`, `403 CONFLICT_OF_INTEREST`, `403 FORBIDDEN` (role or limit), `409` already decided.
+`200` with the `Reversal` after execution and ledger verification (`tracks.financial: "VERIFIED"`). Rejection needs a `reason`. Errors: `403 MFA_REQUIRED`, `403 SELF_APPROVAL`, `403 CONFLICT_OF_INTEREST`, `403 FORBIDDEN` (role or limit), `409` already decided, `409 APPROVAL_POLICY_MISSING` (no approval validity period is configured), `409 APPROVAL_EXPIRED` or `409 APPROVAL_INVALIDATED` (the approval lapsed or the policy changed before submission; renew it). The reversal shows `approval_expires_at`, `policy_id` and, while a kill switch freeze holds it back, `parked_at`.
 
 ## 5. The three demo cases after `demo play`
 

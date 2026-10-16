@@ -561,6 +561,48 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/reversals/{id}/reapproval:
+    post:
+      tags: [Reversals]
+      operationId: requestReapproval
+      summary: Ask for a fresh approval after an approval lapsed
+      description: |
+        An approval is valid for the configured `approval.validity_seconds`. When it
+        lapses the reversal is marked `approval_status: EXPIRED`, nothing is submitted,
+        and it keeps its place (it is still the one live reversal for the debit). This
+        runs the checks again with the caller as the maker and creates a new pending
+        approval. A different person with the authority must approve it; the caller
+        cannot. Repeating the request while one is waiting returns the same reversal.
+        `409 GATE_FAILED` if the checks no longer pass; `409` if the approval has not
+        expired.
+      x-status: implemented
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '202':
+          description: A fresh approval is waiting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reversal' }
+        '400': { description: Malformed body. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The approval has not expired, or the checks no longer pass (`GATE_FAILED`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GateFailedError' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/reversals/{id}/override-proposal:
     post:
@@ -669,7 +711,6 @@ paths:
                         detail: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-
   /v1/cases/{id}/reversal-eligibility:
     get:
       tags: [Reversals]
@@ -720,8 +761,10 @@ paths:
         Needs the approve_reversal grant within the caller's limit and an
         MFA-backed token. The requester cannot approve (`SELF_APPROVAL`), nor
         someone linked to the accounts (`CONFLICT_OF_INTEREST`). A reason is
-        mandatory on rejection. Approving carries the reversal out against the
-        simulated provider and verifies it against the ledger before returning.
+        mandatory on rejection. Approving needs an approved `approval.validity_seconds`
+        (`409 APPROVAL_POLICY_MISSING` otherwise) and records when the approval ends.
+        Approving carries the reversal out against the simulated provider and verifies
+        it against the ledger before returning.
       x-status: implemented
       parameters:
         - $ref: '#/components/parameters/ResourceId'
@@ -1823,8 +1866,12 @@ components:
         requested_by_type: { type: string, enum: [user, system] }
         approval_status: { type: string }
         approval_id: { type: string, format: uuid }
+        approval_expires_at: { type: string, format: date-time, description: When the newest approval stops being valid. }
+        parked_at: { type: string, format: date-time, description: Set while a kill switch freeze holds back submission of an approved reversal. }
         tracks: { $ref: '#/components/schemas/ReversalTracks' }
         gate: { $ref: '#/components/schemas/Gate' }
+        policy_id: { type: string, example: reversal.FAIL001.NIP, description: Stable identity of the policy that governed the decision. }
+        policy_version: { type: string, description: Versions of the configuration in force when the reversal was decided. Never rewritten. }
         provider_ref: { type: string }
         failure_reason: { type: string }
         submitted_at: { type: string, format: date-time }
