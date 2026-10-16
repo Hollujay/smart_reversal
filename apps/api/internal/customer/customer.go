@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -74,14 +75,45 @@ func (s *Store) Create(ctx context.Context, tenant uuid.UUID, displayName, passp
 	return c, err
 }
 
-// LinkAccount records that a customer owns an account token. by says who established
-// it, for example "bank onboarding".
-func (s *Store) LinkAccount(ctx context.Context, tenant, customerID uuid.UUID, accountToken, by string) error {
+// LinkAccount records that a customer owns an account token. tail is the last four
+// digits of the account number as the bank holds them (empty if not supplied); it lets
+// a report that quotes an account tail be checked against the customer's own accounts.
+// by says who established the link, for example "bank onboarding".
+func (s *Store) LinkAccount(ctx context.Context, tenant, customerID uuid.UUID, accountToken, tail, by string) error {
+	if tail != "" && !tailRe.MatchString(tail) {
+		return errors.New("customer: the account tail must be four digits")
+	}
 	return s.Pool.WithTenant(ctx, tenant, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO customer_accounts (tenant_id, customer_id, account_token, linked_by) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
-			tenant, customerID, accountToken, by)
+		_, err := tx.Exec(ctx, `INSERT INTO customer_accounts (tenant_id, customer_id, account_token, tail, linked_by) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+			tenant, customerID, accountToken, tail, by)
 		return err
 	})
+}
+
+var tailRe = regexp.MustCompile(`^[0-9]{4}$`)
+
+// Account is an account a customer owns.
+type Account struct {
+	Token string
+	Tail  string
+}
+
+// OwnedAccounts returns the customer's accounts with their tails.
+func OwnedAccounts(ctx context.Context, tx pgx.Tx, tenant, customerID uuid.UUID) ([]Account, error) {
+	rows, err := tx.Query(ctx, `SELECT account_token, tail FROM customer_accounts WHERE tenant_id = $1 AND customer_id = $2 ORDER BY account_token`, tenant, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Account
+	for rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.Token, &a.Tail); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // Accounts returns the account tokens a customer owns.

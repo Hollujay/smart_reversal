@@ -75,7 +75,7 @@ func TestACustomerSignsInGetsACustomerTokenAndSeesOnlyCustomerRoutes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = r.store.LinkAccount(context.Background(), r.tenant, c.ID, "acct_0123456789abcdef0123456789abcdef", "bank onboarding")
+	_ = r.store.LinkAccount(context.Background(), r.tenant, c.ID, "acct_0123456789abcdef0123456789abcdef", "", "bank onboarding")
 
 	if code, _ := r.login(t, c.Ref, "wrong passphrase!"); code != http.StatusUnauthorized {
 		t.Fatalf("wrong passphrase: %d", code)

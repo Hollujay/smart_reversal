@@ -142,13 +142,13 @@ func TestOwnershipIsWhatTheBankRecordedAndNothingElse(t *testing.T) {
 	ctx := context.Background()
 	alice, _ := r.store.Create(ctx, r.tenant, "Alice", pass)
 	bob, _ := r.store.Create(ctx, r.tenant, "Bob", pass)
-	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, tokA, "bank onboarding"); err != nil {
+	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, tokA, "", "bank onboarding"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, tokA, "bank onboarding"); err != nil {
+	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, tokA, "", "bank onboarding"); err != nil {
 		t.Fatalf("linking twice should be harmless: %v", err)
 	}
-	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, "0123456789", "bank onboarding"); err == nil {
+	if err := r.store.LinkAccount(ctx, r.tenant, alice.ID, "0123456789", "", "bank onboarding"); err == nil {
 		t.Fatal("a raw account number was linked; only tokens are")
 	}
 	check := func(c Customer, token string) (owns bool) {

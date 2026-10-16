@@ -68,6 +68,7 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^internal_target_hours\.[A-Z0-9_]{3,40}$`), 0, 24 * 30, "hours", "The bank's own target for a situation, earlier than its regulatory clock, keyed by the clock id", false},
 	{regexp.MustCompile(`^deadline\.approaching_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as approaching", false},
 	{regexp.MustCompile(`^deadline\.urgent_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as urgent", false},
+	{regexp.MustCompile(`^customer_match\.window_seconds$`), 1, 7 * 86400, "seconds", "How far apart in time a customer's reported transaction and a stored one may be and still be offered as a match", false},
 	{regexp.MustCompile(`^customer\.reports_per_hour$`), 1, 1000, "reports", "Most reports one customer may create in an hour, as abuse protection", false},
 	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
