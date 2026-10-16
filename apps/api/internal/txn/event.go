@@ -36,6 +36,9 @@ var eventTypes = map[string]bool{
 	EvTransferTimeout: true, EvSettlementCompleted: true, EvReversalPosted: true,
 }
 
+// KnownEventType reports whether t is a canonical event type.
+func KnownEventType(t string) bool { return eventTypes[t] }
+
 var channels = map[string]bool{
 	"MOBILE": true, "INTERNET": true, "USSD": true, "POS": true, "ATM": true,
 	"CARD": true, "GATEWAY": true, "MERCHANT": true, "API": true,
