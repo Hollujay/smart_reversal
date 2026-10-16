@@ -220,15 +220,13 @@ var Scenarios = []Scenario{
 		t.begin().emit(SrcSwitch, txn.EvCreditConfirmed, s(3)).emit(SrcOther, txn.EvCreditFailed, s(5))
 		t.label(txn.StateConflicting, "sources disagree; that is raised as unknown and never resolved by guessing", "UNK001")
 	}},
-	{"stuck_pending", "sent to the switch and never heard of again", func(g *gen) {
+	{"stuck_pending", "sent to the switch, or debited and never sent, and never heard of again", func(g *gen) {
 		t := g.newTx("stuck_pending", "NIP", "MOBILE", g.next())
 		t.begin()
 		t.label(txn.StatePending, "no answer past the rail's waiting threshold is raised as unknown by the periodic sweep", "UNK001")
-	}},
-	{"debit_never_sent", "debit posted and nothing else ever arrived", func(g *gen) {
-		t := g.newTx("debit_never_sent", "NIP", "MOBILE", g.next())
-		t.emit(SrcCore, txn.EvDebitPosted, 0)
-		t.label(txn.StateDebited, "a debit that was never sent is also stuck once past the threshold", "UNK001")
+		u := g.newTx("stuck_pending", "NIP", "MOBILE", g.next())
+		u.emit(SrcCore, txn.EvDebitPosted, 0)
+		u.label(txn.StateDebited, "a debit that was never sent is also stuck once past the threshold", "UNK001")
 	}},
 	{"atm_dispense_fault", "ATM debit posted, cash not dispensed", func(g *gen) {
 		t := g.newTx("atm_dispense_fault", "ATM", "ATM", g.next())
@@ -249,6 +247,11 @@ var Scenarios = []Scenario{
 		t := g.newTx("amount_mismatch", "MISMATCH", "API", g.next())
 		t.begin().emit(SrcSwitch, txn.EvCreditFailed, s(4))
 		t.label(txn.StateConfirmedFailure, "a discrepancy between sources on amount or currency", "MIS001")
+	}},
+	{"incomplete_routing", "an intermediary switch dropped the transfer before the beneficiary institution", func(g *gen) {
+		t := g.newTx("incomplete_routing", "INTERCHANGE", "API", g.next())
+		t.begin().emit(SrcSwitch, txn.EvCreditFailed, s(4))
+		t.label(txn.StateConfirmedFailure, "multi-leg routing dropped the transfer", "INC001")
 	}},
 	{"delayed_reversal", "credit failed and the reversal posted twenty minutes later", func(g *gen) {
 		t := g.newTx("delayed_reversal", "NIP", "MOBILE", g.next())
