@@ -134,3 +134,19 @@ func TestWithNoCustomerIdentityProviderTheCustomerRoutesDoNotExist(t *testing.T)
 		t.Fatalf("%d", rec.Code)
 	}
 }
+
+type recorder = httptest.ResponseRecorder
+
+func newReq(method, path, body, tok string) *http.Request {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return req
+}
+
+func serve(h http.Handler, req *http.Request) *recorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
