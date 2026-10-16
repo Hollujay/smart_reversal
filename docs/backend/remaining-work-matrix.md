@@ -173,7 +173,7 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 | 5 customer alert parsed, classified, correct countdown, queued as CUS001 | COMPLETE | see B10 |
 | 6 both dashboards reflect the above within seconds | PARTIAL | `reports/summary` reflects it; the executive and operations dashboard data are not separate endpoints |
 | 7 changing a rule in configuration changes behaviour with no code change | COMPLETE | configuration and declarative rules |
-| X1 20 end-to-end scenarios | PARTIAL | Scenarios 1 to 4, 10, 11, 12, 14, 15, 17 are covered by tests in the packages named above; 5 to 9, 13, 16, 18 to 20 are not |
+| X1 20 end-to-end scenarios | PARTIAL | Covered by tests in the packages named above: 1, 2, 3, 4, 10, 11, 17. Covered in part: 12 (stale status evidence holds the gate and stale sources hold findings; no feed-outage end-to-end test through the gate), 14 (a customer report joins the exception; no agent view), 15 (classification only; lanes do not exist). Not covered: 5 to 9, 13, 16, 18 to 20 |
 | X2 historical replay and pilot tooling | MISSING | Synthetic replay only |
 | X3 demo hardening | COMPLETE for the baseline demo (earlier) | `docs/runbooks/demo-runbook.md` |
 
