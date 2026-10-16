@@ -2350,6 +2350,7 @@ components:
         regulatory_clock: { type: string }
         opened_at: { type: string, format: date-time }
         sla_due_at: { type: string, format: date-time }
+        internal_target_at: { type: string, format: date-time, description: "The bank's own target, kept apart from the regulatory deadline in sla_due_at. Absent when none was set." }
         resolved_at: { type: string, format: date-time }
         closed_reason: { type: string }
         version: { type: integer }

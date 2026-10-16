@@ -38,6 +38,7 @@ type caseJSON struct {
 	RegulatoryClock string     `json:"regulatory_clock,omitempty"`
 	OpenedAt        time.Time  `json:"opened_at"`
 	SLADueAt        *time.Time `json:"sla_due_at,omitempty"`
+	InternalTarget  *time.Time `json:"internal_target_at,omitempty"`
 	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 	ClosedReason    string     `json:"closed_reason,omitempty"`
 	Version         int        `json:"version"`
@@ -47,7 +48,7 @@ type caseJSON struct {
 func toCaseJSON(c cases.Case) caseJSON {
 	out := caseJSON{ID: c.ID.String(), CaseRef: c.Ref, Classification: c.Classification, Status: c.Status, Priority: c.Priority,
 		RiskGrade: c.RiskGrade, Source: c.Source, Currency: c.Currency, RootCause: c.RootCause, Queue: c.Queue, RuleID: c.RuleID,
-		RuleVersion: c.RuleVersion, RegulatoryClock: c.RegulatoryClock, OpenedAt: c.OpenedAt, SLADueAt: c.SLADueAt, ResolvedAt: c.ResolvedAt,
+		RuleVersion: c.RuleVersion, RegulatoryClock: c.RegulatoryClock, OpenedAt: c.OpenedAt, SLADueAt: c.SLADueAt, InternalTarget: c.InternalTargetAt, ResolvedAt: c.ResolvedAt,
 		ClosedReason: c.ClosedReason, Version: c.Version, Simulated: true}
 	if c.TxnID != nil {
 		out.TxnID = c.TxnID.String()
