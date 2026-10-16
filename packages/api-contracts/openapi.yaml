@@ -1408,6 +1408,43 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/metrics/catalogue:
+    get:
+      tags: [Platform]
+      operationId: metricsCatalogue
+      summary: What each reporting metric means
+      description: |
+        For every metric: its definition, formula, source tables, period, unit and known
+        limitations. Needs `view_exception_queue` with `full`, `metadata` or `aggregate`
+        scope.
+      x-status: implemented
+      responses:
+        '200': { description: The catalogue., content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/MetricDefinition' } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/metrics:
+    get:
+      tags: [Platform]
+      operationId: metricsReport
+      summary: Reporting metrics for a period, measured from stored records
+      description: |
+        `from` and `to` are RFC 3339 times; the default is the last seven days and the
+        longest period is 366 days. Values are measured, `null` when there are no samples
+        (never zero), and describe synthetic data only. Money is per currency and kept as
+        four separate numbers: gross flagged, submitted, reversed and still open.
+        Latencies are p50 and p95 by linear interpolation in seconds. No metric is a
+        target or a claim about real traffic. "Complaints prevented" is not offered.
+      x-status: implemented
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: The metrics., content: { application/json: { schema: { $ref: '#/components/schemas/MetricsReport' } } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/review-items:
     get:
       tags: [Reversals]
@@ -2435,6 +2472,40 @@ components:
         created_at: { type: string, format: date-time }
         version: { type: integer }
         outcome: { type: object, description: 'Present on the response to a confirm call.' }
+    MetricDefinition:
+      type: object
+      required: [name, title, definition, formula, source_tables, period, unit, limitations]
+      properties:
+        name: { type: string }
+        title: { type: string }
+        definition: { type: string }
+        formula: { type: string }
+        source_tables: { type: array, items: { type: string } }
+        period: { type: string }
+        unit: { type: string }
+        limitations: { type: string }
+    MetricsReport:
+      type: object
+      required: [from, to, simulated, metrics]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        simulated: { type: boolean }
+        metrics:
+          type: array
+          items:
+            type: object
+            required: [name, samples, unit]
+            properties:
+              name: { type: string }
+              samples: { type: integer }
+              unit: { type: string }
+              p50: { type: number }
+              p95: { type: number }
+              value: { type: number }
+              breakdown: { type: object, additionalProperties: { type: number } }
+              by_currency: { type: object, additionalProperties: { type: object, additionalProperties: { type: integer } } }
+              note: { type: string }
     ReviewItem:
       type: object
       required: [kind, case_id, case_ref, classification, case_status, opened_at, evidence, gate, blocked_because, release_allowed, release_requires, simulated]
