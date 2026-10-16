@@ -25,3 +25,10 @@ targetRules = ["generic-api-key"]
 paths = [
   '''apps/web/src/services/mockSimulatorData\.ts''',
 ]
+
+[[allowlists]]
+description = "The made-up raw_payload_hash shown in the event contract's example (sha256:7c1e...), used as a fixture value in tests"
+targetRules = ["generic-api-key"]
+regexes = [
+  '''sha256:7c1e[0-9a-f]*''',
+]
