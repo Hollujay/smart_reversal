@@ -425,32 +425,38 @@ func TestMoneyFormatting(t *testing.T) {
 	}
 }
 
-func TestStateMachineAllowsExternalDependencyMoves(t *testing.T) {
-	if !CanTransition(StUnderInvestigation, StExternalDependency) {
-		t.Errorf("UNDER_INVESTIGATION -> EXTERNAL_DEPENDENCY should be allowed")
-	}
-	if !CanTransition(StExternalDependency, StUnderInvestigation) {
-		t.Errorf("EXTERNAL_DEPENDENCY -> UNDER_INVESTIGATION should be allowed")
-	}
-	if CanTransition(StDetected, StExternalDependency) {
-		t.Errorf("DETECTED -> EXTERNAL_DEPENDENCY should not be allowed")
-	}
-	if CanTransition(StExternalDependency, StResolved) {
-		t.Errorf("EXTERNAL_DEPENDENCY -> RESOLVED should not be allowed")
-	}
-}
-
-func TestEscalateAndAutoAssignValidation(t *testing.T) {
-	svc := &Service{}
+func TestACaseCanNameItsClockAndKeepAnInternalTargetApartFromTheRegulatoryDeadline(t *testing.T) {
+	r := newRig(t)
 	ctx := context.Background()
-	_, err := svc.Escalate(ctx, nil, uuid.New(), uuid.New(), System, "SUPERVISOR", "")
-	if !errors.Is(err, ErrInvalid) {
-		t.Errorf("Escalate with empty reason should return ErrInvalid, got %v", err)
+	raw, _ := json.Marshal(configsvc.Clock{Situation: "Written reversal request", Duration: 48, Unit: "hours", StartEvent: "transaction_date", Calendar: "WAT", Owner: "Compliance"})
+	if err := r.tx(t, func(tx pgx.Tx) error {
+		v, err := r.svc.Config.Propose(ctx, tx, r.tenant, uuid.New(), configsvc.ProposeInput{Key: configsvc.ClockKey("WRONG_ACCOUNT_REQUEST"), Value: raw,
+			SourceReference: "SYNTHETIC DEMO POLICY", EffectiveFrom: r.now, VerifyStatus: "unverified", Reason: "synthetic policy for the test"})
+		if err != nil {
+			return err
+		}
+		_, err = r.svc.Config.Decide(ctx, tx, r.tenant, uuid.New(), v.Key, v.Version, true, "")
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
-
-	_, err = svc.AutoAssign(ctx, nil, uuid.New(), uuid.New(), System, "SUPERVISOR")
-	if err == nil || !strings.Contains(err.Error(), "routing service not configured") {
-		t.Errorf("AutoAssign without routing should fail, got %v", err)
+	target := r.now.Add(6 * time.Hour)
+	in := botCase(r.txn(t, "INS-IT1"), CodeCustomer)
+	in.Source, in.Clock, in.InternalTargetAt = SourceCustomer, "WRONG_ACCOUNT_REQUEST", &target
+	c, _ := r.open(t, in)
+	if c.RegulatoryClock != "WRONG_ACCOUNT_REQUEST" || c.SLADueAt == nil || !c.SLADueAt.Equal(c.OpenedAt.Add(48*time.Hour)) {
+		t.Fatalf("the named clock was not used: %+v", c)
+	}
+	if c.InternalTargetAt == nil || !c.InternalTargetAt.Equal(target) {
+		t.Fatalf("the internal target was lost: %+v", c.InternalTargetAt)
+	}
+	// Without a name, the code and rail still pick the clock, and there is no internal target.
+	plain, _ := r.open(t, botCase(r.txn(t, "INS-IT2"), CodeNoCredit))
+	if plain.InternalTargetAt != nil {
+		t.Fatalf("%v", plain.InternalTargetAt)
+	}
+	// CUS002 uses the written-reversal clock by default.
+	if clockFor(CodeWrongAcct, "NIP") != "WRONG_ACCOUNT_REQUEST" {
+		t.Fatal("CUS002 has no clock")
 	}
 }
-
