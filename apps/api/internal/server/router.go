@@ -135,6 +135,7 @@ func NewRouter(o Options) http.Handler {
 					pr.Post("/reversals/{id}/reapproval", o.Services.requestReapproval)
 					pr.Get("/cases/{id}/reversal-eligibility", o.Services.reversalEligibility)
 					pr.Get("/approvals", o.Services.listApprovals)
+					pr.Get("/review-items", o.Services.listReviewItems)
 					pr.Post("/approvals/{id}/decision", o.Services.decideApproval)
 					pr.Get("/reconciliation/reversals", o.Services.reconcileReversals)
 					pr.Get("/reports/summary", o.Services.summaryReport)

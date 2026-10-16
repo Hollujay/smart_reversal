@@ -1059,6 +1059,30 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/review-items:
+    get:
+      tags: [Reversals]
+      operationId: listReviewItems
+      summary: Cases whose outcome is not a confirmed failure, shown beside the approval queue
+      description: |
+        Needs the `view_exception_queue` grant with `full` scope. These are cases an
+        approver or analyst should look at but that cannot be released: an unknown,
+        pending, debited-only or conflicting outcome is never reversed. Each item carries
+        the case evidence, the transaction, the reversal gate's checks, why it is
+        blocked (`blocked_because`) and what would allow a release (`release_requires`).
+        `release_allowed` is always false. A reversal request for such a case is
+        refused with 409 GATE_FAILED. Read-only. Items disappear when the case resolves
+        or a live reversal exists.
+      x-status: implemented
+      responses:
+        '200':
+          description: Review items, oldest first.
+          content:
+            application/json:
+              schema: { type: object, required: [items, simulated], properties: { simulated: { type: boolean }, items: { type: array, items: { $ref: '#/components/schemas/ReviewItem' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/approvals:
     get:
       tags: [Reversals]
@@ -1901,6 +1925,24 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    ReviewItem:
+      type: object
+      required: [kind, case_id, case_ref, classification, case_status, opened_at, evidence, gate, blocked_because, release_allowed, release_requires, simulated]
+      properties:
+        kind: { type: string, enum: [REVIEW] }
+        case_id: { type: string, format: uuid }
+        case_ref: { type: string }
+        classification: { type: string }
+        case_status: { type: string }
+        opened_at: { type: string, format: date-time }
+        transaction: { type: object }
+        evidence: { type: array, items: { type: object } }
+        gate: { type: object }
+        blocked_because: { type: string }
+        release_allowed: { type: boolean, enum: [false] }
+        release_requires: { type: string }
+        degraded_sources: { type: object, additionalProperties: { type: string }, description: Sources that contributed to the transaction and are stale or down. }
+        simulated: { type: boolean }
     RuleDefinition:
       type: object
       required: [rule_id, version, code, root_cause, explanation, all]
