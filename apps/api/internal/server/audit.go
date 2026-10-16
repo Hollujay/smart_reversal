@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/smartreversal/smartreversal/apps/api/internal/alerts"
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
@@ -20,6 +21,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
+	"github.com/smartreversal/smartreversal/apps/api/internal/incidents"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
@@ -47,6 +49,9 @@ type Services struct {
 	// CustomerLogin enables the ReverseIt customer routes under /v1/customer. Nil
 	// leaves them out entirely.
 	CustomerLogin *customer.Login
+	// Alerts and Incidents enable /v1/alerts and /v1/incidents. Nil leaves them out.
+	Alerts    *alerts.Service
+	Incidents *incidents.Service
 	// Reports enables the customer report routes (needs CustomerLogin).
 	Reports *creport.Service
 	// Rules enables the /v1/rules routes. Nil leaves them out.

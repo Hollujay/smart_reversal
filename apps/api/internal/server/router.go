@@ -171,6 +171,16 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/reconciliation/reversals", o.Services.reconcileReversals)
 					pr.Get("/reports/summary", o.Services.summaryReport)
 				}
+				if o.Services.Alerts != nil {
+					pr.Get("/alerts", o.Services.listAlerts)
+					pr.Post("/alerts/{id}/acknowledge", o.Services.acknowledgeAlert)
+				}
+				if o.Services.Incidents != nil {
+					pr.Get("/incidents", o.Services.listIncidents)
+					pr.Get("/incidents/{id}", o.Services.getIncident)
+					pr.Post("/incidents/{id}/causation", o.Services.setIncidentCausation)
+					pr.Post("/incidents/{id}/resolve", o.Services.resolveIncident)
+				}
 				if o.Services.KillSwitch != nil {
 					pr.Get("/killswitch", o.Services.getKillSwitch)
 					pr.Post("/killswitch", o.Services.changeKillSwitch)
