@@ -66,6 +66,9 @@ func (m *Mapping) build(line int, g get) (Record, error) {
 			rec.Refs[key] = v
 		}
 	}
+	if len(rec.Refs) > 0 {
+		rec.Envelope.Refs = rec.Refs
+	}
 	return rec, nil
 }
 

@@ -118,6 +118,10 @@ func (s *Service) Ingest(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, env E
 		return Result{}, fmt.Errorf("txn: store event: %w", err)
 	}
 
+	if err := storeRefs(ctx, tx, tenant, id, env); err != nil {
+		return Result{}, err
+	}
+
 	p, err := s.reproject(ctx, tx, tenant, id)
 	if err != nil {
 		return Result{}, err
@@ -199,4 +203,23 @@ func (s *Service) Quarantine(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, s
 	_, err := tx.Exec(ctx, `INSERT INTO quarantined_events (tenant_id, source_system, reason, payload_hash) VALUES ($1,$2,$3,$4)`,
 		tenant, sourceSystem, reason, payloadHash)
 	return err
+}
+
+// storeRefs records the external references an event carries, and the session id,
+// against its transaction. A reference seen before is left as it is.
+func storeRefs(ctx context.Context, tx pgx.Tx, tenant, id uuid.UUID, env Envelope) error {
+	refs := map[string]string{}
+	for k, v := range env.Refs {
+		refs[k] = v
+	}
+	if env.Txn.SessionID != "" {
+		refs["SESSION_ID"] = env.Txn.SessionID
+	}
+	for k, v := range refs {
+		if _, err := tx.Exec(ctx, `INSERT INTO transaction_refs (tenant_id, txn_id, ref_type, ref_value, source_system) VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT DO NOTHING`, tenant, id, k, v, env.SourceSystem); err != nil {
+			return fmt.Errorf("txn: store reference: %w", err)
+		}
+	}
+	return nil
 }
