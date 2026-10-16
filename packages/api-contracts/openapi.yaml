@@ -1288,6 +1288,56 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/customer/cases:
+    get:
+      tags: [Customer]
+      operationId: customerCases
+      summary: The customer's own cases, including ones the bank found that they never reported
+      description: |
+        A case is visible if the customer reported it, or if the bank detected it on a
+        transaction of an account the bank recorded as the customer's. `origin` is
+        `reported_by_you` or `found_by_the_bank`. `bank_target` is the earlier of the
+        regulatory deadline and the bank's own target. Nothing about anyone else.
+      x-status: implemented
+      responses:
+        '200': { description: The cases., content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/customer/cases/{id}/timeline:
+    get:
+      tags: [Customer]
+      operationId: customerCaseTimeline
+      summary: What the customer may be told about a case
+      description: |
+        Stage, a plain headline and a timeline. "Resolved" and "Reversal confirmed" appear
+        only after the financial outcome is verified; nothing says money was returned
+        before then. A case that is not the customer's is a 404.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The status., content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/customer/cases/{id}/escalation:
+    get:
+      tags: [Customer]
+      operationId: customerCaseEscalation
+      summary: The escalation ladder, once the case is overdue and unresolved
+      description: |
+        Empty and `due: false` until the earlier of the regulatory deadline and the bank's
+        target has passed on an unfinished case. Then the steps the bank supplied and
+        Compliance approved, in order. If none is approved the answer says so and invents
+        no contact details.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The ladder., content: { application/json: { schema: { type: object, required: [due, steps], properties: { due: { type: boolean }, note: { type: string }, steps: { type: array, items: { type: object, properties: { step: { type: integer }, label: { type: string }, contact: { type: string }, wording: { type: string } } } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/review-items:
     get:
       tags: [Reversals]

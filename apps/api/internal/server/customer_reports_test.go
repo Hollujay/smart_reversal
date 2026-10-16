@@ -21,6 +21,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/creport"
 	"github.com/smartreversal/smartreversal/apps/api/internal/customer"
 	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
+	"github.com/smartreversal/smartreversal/apps/api/internal/escalation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
@@ -261,5 +262,94 @@ func TestAPastedAlertBecomesACustomerCaseWithTheRightCountdownOnTheSharedQueue(t
 	}
 	if !found.InternalTarget.Before(*found.SLADueAt) {
 		t.Fatalf("the bank's own target should come first: %v %v", found.InternalTarget, found.SLADueAt)
+	}
+}
+
+func TestACustomerSeesTheirOwnCasesIncludingOnesTheBankFoundAndNobodyElses(t *testing.T) {
+	r := newReportRig(t)
+	at := time.Now().Add(-time.Hour).UTC()
+	r.transfer(t, tokA, "NIP202610140001", 1850000, at, "DEBIT_POSTED", "TRANSFER_SENT", "CREDIT_FAILED")
+	r.transfer(t, tokB, "NIP202610140002", 990000, at, "DEBIT_POSTED", "TRANSFER_SENT", "CREDIT_FAILED")
+	cs := &cases.Service{Audit: r.appender}
+	open := func(ref string) cases.Case {
+		var c cases.Case
+		_ = r.pool.WithTenant(context.Background(), r.tenant, func(tx pgx.Tx) error {
+			var id uuid.UUID
+			if err := tx.QueryRow(context.Background(), `SELECT id FROM transactions WHERE instruction_ref = $1`, ref).Scan(&id); err != nil {
+				return err
+			}
+			var err error
+			c, _, err = cs.Open(context.Background(), tx, r.tenant, cases.OpenInput{Classification: cases.CodeNoCredit, Source: cases.SourceBot, TxnID: &id, Rail: "NIP", RuleID: "DET-FAIL-1", RuleVersion: "1.0", Explanation: "test", Actor: cases.System})
+			return err
+		})
+		return c
+	}
+	aliceCase, bobCase := open("NIP202610140001"), open("NIP202610140002")
+
+	rec := serve(r.handler, newReq("GET", "/v1/customer/cases", "", r.aliceT))
+	var list struct{ Items []customerCaseItem }
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if rec.Code != http.StatusOK || len(list.Items) != 1 || list.Items[0].CaseRef != aliceCase.Ref || list.Items[0].DetectedBy != "found_by_the_bank" || list.Items[0].Verified {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), bobCase.Ref) {
+		t.Fatal("another customer's case was listed")
+	}
+
+	path := "/v1/customer/cases/" + aliceCase.ID.String()
+	rec = serve(r.handler, newReq("GET", path+"/timeline", "", r.aliceT))
+	var st customerStatus
+	_ = json.Unmarshal(rec.Body.Bytes(), &st)
+	if rec.Code != http.StatusOK || st.CaseRef != aliceCase.Ref || st.OutcomeVerified || st.Stage != "investigating" || len(st.Timeline) == 0 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	for _, bad := range []string{"refund", "returned", "money back"} {
+		if strings.Contains(strings.ToLower(rec.Body.String()), bad) {
+			t.Fatalf("the timeline promises money before it is verified: %s", rec.Body.String())
+		}
+	}
+	for _, p := range []string{path + "/timeline", path + "/escalation", "/v1/customer/cases/" + uuid.NewString() + "/timeline", "/v1/customer/cases/not-an-id/timeline"} {
+		if rec := serve(r.handler, newReq("GET", p, "", r.bobT)); rec.Code != http.StatusNotFound {
+			t.Errorf("%s as another customer: %d", p, rec.Code)
+		}
+	}
+	if rec := serve(r.handler, newReq("GET", path+"/timeline", "", "")); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("%d", rec.Code)
+	}
+
+	// The escalation ladder is empty until the case is overdue and unresolved.
+	esc := func() escalationView {
+		var v escalationView
+		rec := serve(r.handler, newReq("GET", path+"/escalation", "", r.aliceT))
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+		return v
+	}
+	if v := esc(); v.Due || len(v.Steps) != 0 {
+		t.Fatalf("%+v", v)
+	}
+	if _, err := r.pool.Exec(context.Background(), `UPDATE cases SET sla_due_at = now() - interval '1 minute' WHERE id = $1`, aliceCase.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v := esc(); !v.Due || len(v.Steps) != 0 || v.Note == "" {
+		t.Fatalf("overdue with no approved steps must say so and invent nothing: %+v", v)
+	}
+	author, reviewer := uuid.New(), uuid.New()
+	_ = r.pool.WithTenant(context.Background(), r.tenant, func(tx pgx.Tx) error {
+		if err := escalation.Propose(context.Background(), tx, r.tenant, author, escalation.Step{No: 1, Label: "Bank dispute channel", Contact: "SYNTHETIC PLACEHOLDER", Wording: "Please contact the bank's dispute channel about this case."}); err != nil {
+			return err
+		}
+		return escalation.Decide(context.Background(), tx, r.tenant, reviewer, 1, true, "checked", time.Now())
+	})
+	if v := esc(); !v.Due || len(v.Steps) != 1 || v.Steps[0].Label != "Bank dispute channel" {
+		t.Fatalf("%+v", v)
+	}
+	if _, err := r.pool.Exec(context.Background(), `UPDATE cases SET status = 'RESOLVED' WHERE id = $1`, aliceCase.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v := esc(); v.Due || len(v.Steps) != 0 {
+		t.Fatalf("a resolved case still shows the ladder: %+v", v)
 	}
 }

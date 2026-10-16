@@ -83,6 +83,11 @@ func NewRouter(o Options) http.Handler {
 			v1.Route("/customer", func(cr chi.Router) {
 				cr.Use(requireAuth(o.Verifier, identity.AudienceCustomer))
 				cr.Get("/me", o.Services.customerMe)
+				if o.Services.Reports != nil && o.Services.Cases != nil {
+					cr.Get("/cases", o.Services.customerCases)
+					cr.Get("/cases/{id}/timeline", o.Services.customerCaseTimeline)
+					cr.Get("/cases/{id}/escalation", o.Services.customerCaseEscalation)
+				}
 				if o.Services.Reports != nil {
 					cr.Post("/reports", o.Services.createCustomerReport)
 					cr.Get("/reports", o.Services.listCustomerReports)
