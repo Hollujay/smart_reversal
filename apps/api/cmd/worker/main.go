@@ -15,7 +15,9 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/config"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/correlate"
 	"github.com/smartreversal/smartreversal/apps/api/internal/detect"
+	"github.com/smartreversal/smartreversal/apps/api/internal/inbound"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
@@ -85,6 +87,7 @@ func run() error {
 
 	return worker.Run(ctx, worker.Deps{
 		Detector:        detector,
+		Inbound:         &inbound.Handler{Txn: txnSvc, Correlate: &correlate.Matcher{Txn: txnSvc}},
 		Reversal:        revSvc,
 		Pool:            pool,
 		Redis:           rc,

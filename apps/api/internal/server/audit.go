@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
@@ -40,6 +41,9 @@ type Services struct {
 	Txn *txn.Service
 	// Feed enables POST /v1/feeds/{mapping}/files (needs ServiceVerifier on Options).
 	Feed *feed.Importer
+	// Redis, when set, lets GET /v1/pipeline report stream backlog. Nil is allowed:
+	// the report then covers the outbox only.
+	Redis *redis.Client
 	// Correlate enables POST /v1/observations and the evidence routes (needs Txn).
 	Correlate *correlate.Matcher
 	// Cases enables the exception queue and case routes. Nil leaves them out.

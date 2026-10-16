@@ -225,6 +225,27 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/pipeline:
+    get:
+      tags: [Ingestion]
+      operationId: getPipeline
+      summary: How much work is waiting in the outbox and on the Redis streams
+      description: |
+        Needs the `manage_ingestion` grant (no MFA to view). Reports measured numbers
+        and no verdict: what counts as too much backlog is for operators to decide.
+        The outbox figures are for the caller's institution. Stream figures are for
+        the shared platform. `redis_available` false means Redis was not configured or
+        did not answer, and says nothing about the streams.
+      x-status: implemented
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/sources:
     get:
       tags: [Ingestion]
@@ -1659,6 +1680,37 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    PipelineReport:
+      type: object
+      required: [outbox, redis_available, streams]
+      properties:
+        outbox:
+          type: object
+          required: [unpublished, failing, oldest_unpublished_age_secs]
+          properties:
+            unpublished: { type: integer }
+            failing: { type: integer, description: Unpublished rows that have already failed at least once. }
+            oldest_unpublished_age_secs: { type: number }
+        redis_available: { type: boolean }
+        streams:
+          type: array
+          items:
+            type: object
+            required: [name, length, dead_letters, groups]
+            properties:
+              name: { type: string }
+              length: { type: integer }
+              dead_letters: { type: integer }
+              groups:
+                type: array
+                items:
+                  type: object
+                  required: [name, consumers, pending, lag]
+                  properties:
+                    name: { type: string }
+                    consumers: { type: integer }
+                    pending: { type: integer }
+                    lag: { type: integer, nullable: true, description: Entries not yet delivered to the group; null when Redis cannot say. }
     SourceExpectation:
       type: object
       required: [stale_after_secs, down_after_secs, max_skew_secs]

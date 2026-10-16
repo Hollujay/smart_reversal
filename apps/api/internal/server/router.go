@@ -96,6 +96,7 @@ func NewRouter(o Options) http.Handler {
 				if o.Services.Txn != nil {
 					pr.Get("/transactions", o.Services.listTransactions)
 					pr.Get("/transactions/{id}", o.Services.getTransaction)
+					pr.Get("/pipeline", o.Services.getPipeline)
 					pr.Get("/sources", o.Services.listSources)
 					pr.Put("/sources/{system}/expectation", o.Services.setSourceExpectation)
 					pr.Get("/quarantine", o.Services.listQuarantine)
