@@ -13,6 +13,13 @@ paths = [
 ]
 
 [[allowlists]]
+description = "Synthetic account token (acct_ plus 32 hex digits, not a real credential) in an event fixture of a worker integration test"
+targetRules = ["generic-api-key"]
+paths = [
+  '''apps/api/internal/worker/worker_test\.go''',
+]
+
+[[allowlists]]
 description = "Mock idempotency keys in the synthetic simulator data of the web app"
 targetRules = ["generic-api-key"]
 paths = [
