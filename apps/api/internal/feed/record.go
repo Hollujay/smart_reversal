@@ -105,4 +105,4 @@ func (m *Mapping) parseAmount(s string) (int64, error) {
 }
 
 // ErrTooManyRows is returned when a file exceeds MaxRows.
-var ErrTooManyRows = fmt.Errorf("feed: the file has more than %d rows", MaxRows)
+var ErrTooManyRows = fmt.Errorf("the file has more than %d rows", MaxRows)

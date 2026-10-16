@@ -14,6 +14,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
+	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
@@ -36,6 +37,8 @@ type Services struct {
 	// Txn enables transaction ingestion (needs ServiceVerifier on Options) and the
 	// transaction read routes. Nil leaves them out.
 	Txn *txn.Service
+	// Feed enables POST /v1/feeds/{mapping}/files (needs ServiceVerifier on Options).
+	Feed *feed.Importer
 	// Cases enables the exception queue and case routes. Nil leaves them out.
 	Cases *cases.Service
 	// Reversal enables the simulated reversal and approval routes (needs Cases).

@@ -16,6 +16,7 @@ import (
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
+	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/dbtest"
 	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
@@ -58,7 +59,7 @@ func newIngestRig(t *testing.T) *ingestRig {
 	r.auditRig = &auditRig{pool: pool, signer: signer, tenant: tenant, appender: app,
 		handler: NewRouter(Options{Logger: logger, Verifier: identity.NewVerifier(ks, nil),
 			ServiceVerifier: &servauth.Verifier{Pool: pool},
-			Services:        &Services{Pool: pool, Policy: policy, Audit: app, Txn: &txn.Service{}}})}
+			Services:        &Services{Pool: pool, Policy: policy, Audit: app, Txn: &txn.Service{}, Feed: &feed.Importer{Pool: pool, Txn: &txn.Service{}}}})}
 	return r
 }
 

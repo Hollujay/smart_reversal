@@ -17,6 +17,10 @@ import (
 // MaxFileBytes bounds an uploaded file.
 const MaxFileBytes = 32 << 20
 
+// ErrUnreadable means the file as a whole cannot be read with the mapping, so none of
+// it was imported.
+var ErrUnreadable = errors.New("feed: the file cannot be read with this mapping")
+
 // Result is what an import did.
 type Result struct {
 	FileID      uuid.UUID  `json:"file_id"`
@@ -44,7 +48,7 @@ type Importer struct {
 // is idempotent. Rows that are refused are quarantined with the file and line.
 func (im *Importer) Import(ctx context.Context, tenant uuid.UUID, mappingName string, data []byte) (Result, error) {
 	if len(data) > MaxFileBytes {
-		return Result{}, fmt.Errorf("feed: the file is larger than %d bytes", MaxFileBytes)
+		return Result{}, fmt.Errorf("%w: it is larger than %d bytes", ErrUnreadable, MaxFileBytes)
 	}
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
@@ -67,8 +71,11 @@ func (im *Importer) Import(ctx context.Context, tenant uuid.UUID, mappingName st
 	}
 
 	recs, rowErrs, err := m.Parse(data)
-	if err != nil {
+	if errors.Is(err, ErrMapping) {
 		return Result{}, err
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: %s", ErrUnreadable, err.Error())
 	}
 	res := Result{Mapping: m.Name, Version: m.Version, Total: len(recs) + len(rowErrs), RowErrors: rowErrs}
 	res.Rejected = len(rowErrs)

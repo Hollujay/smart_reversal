@@ -69,6 +69,10 @@ func NewRouter(o Options) http.Handler {
 			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/events", o.Services.ingestEvent)
 		}
 
+		if o.ServiceVerifier != nil && o.Services.ready() && o.Services.Feed != nil {
+			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/feeds/{mapping}/files", o.Services.importFeedFile)
+		}
+
 		// Everything below needs a valid operator token. Routes are added only
 		// inside this group, so a new route cannot be public by accident.
 		v1.Group(func(pr chi.Router) {

@@ -149,6 +149,46 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/feeds/{mapping}/files:
+    post:
+      tags: [Ingestion]
+      operationId: importFeedFile
+      summary: Import a file of transaction events through an active mapping
+      description: |
+        Called by a source system with a service assertion that holds `events:write`.
+        The body is the file itself (CSV, fixed width or XML, as the active mapping
+        says). Every row passes the same validation as `POST /v1/events`. Rows that are
+        refused are listed in the answer and kept in quarantine; the others are
+        imported. The same bytes are imported once: a second upload returns the first
+        result with `already_imported` true. 201 imported, 200 seen before, 404 no
+        active mapping of that name, 413 too large, 422 the file cannot be read.
+      x-status: implemented
+      security: []
+      parameters:
+        - name: mapping
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: These exact bytes were imported before.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedImportResult' }
+        '201':
+          description: Imported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedImportResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/transactions:
     get:
       tags: [Transactions]
@@ -1385,6 +1425,27 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    FeedImportResult:
+      type: object
+      required: [file_id, mapping, mapping_version, status, rows_total, rows_accepted, rows_duplicate, rows_rejected, already_imported]
+      properties:
+        file_id: { type: string, format: uuid }
+        mapping: { type: string }
+        mapping_version: { type: integer }
+        status: { type: string, enum: [imported, imported_with_errors] }
+        rows_total: { type: integer }
+        rows_accepted: { type: integer }
+        rows_duplicate: { type: integer }
+        rows_rejected: { type: integer }
+        already_imported: { type: boolean }
+        row_errors:
+          type: array
+          items:
+            type: object
+            required: [line, reason]
+            properties:
+              line: { type: integer }
+              reason: { type: string }
     Case:
       type: object
       required: [id, case_ref, classification, status, priority, source, queue, opened_at, version, simulated]
