@@ -27,6 +27,7 @@ tags:
   - name: Transactions
   - name: Cases
   - name: Reversals
+  - name: Operations
   - name: Governance
 
 security:
@@ -1430,6 +1431,120 @@ paths:
               schema: { type: object, required: [items, simulated], properties: { simulated: { type: boolean }, items: { type: array, items: { $ref: '#/components/schemas/ReviewItem' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/alerts:
+    get:
+      tags: [Operations]
+      operationId: listAlerts
+      summary: Internal alerts, newest first
+      description: |
+        Needs `view_exception_queue` with `full` scope. Alerts are internal only; none is sent
+        to a customer. One open alert exists per kind and subject (deduplicated), routed to the
+        people on call and escalated when unacknowledged past the approved
+        `alert.escalate_after_minutes`.
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Alerts.
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/alerts/{id}/acknowledge:
+    post:
+      tags: [Operations]
+      operationId: acknowledgeAlert
+      summary: Acknowledge an alert
+      description: Only someone routed the alert, holding its target role or the role it escalated to.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The acknowledged alert. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already acknowledged or no longer open. }
+
+  /v1/incidents:
+    get:
+      tags: [Operations]
+      operationId: listIncidents
+      summary: Incidents grouping exceptions by rail, channel and error signature
+      description: Needs `view_exception_queue` with `full` or `metadata` scope. Grouping needs approved `incident.group_window_minutes` and `incident.min_group_size`.
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Incidents.
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/incidents/{id}:
+    get:
+      tags: [Operations]
+      operationId: getIncident
+      summary: One incident with the cases in it
+      description: The id may be the incident reference. Needs `full` scope.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: The incident and its case ids. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/incidents/{id}/causation:
+    post:
+      tags: [Operations]
+      operationId: setIncidentCausation
+      summary: Record how sure the cause is
+      description: Needs `add_notes_evidence` with `full` scope. The judgement only moves up (correlated, probable, confirmed), with a note; going back is 409.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [causation_status, note], properties: { causation_status: { type: string }, suspected_cause: { type: string }, note: { type: string } } }
+      responses:
+        '200': { description: The incident. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The judgement would move down. }
+        '422': { description: Missing or invalid field. }
+
+  /v1/incidents/{id}/resolve:
+    post:
+      tags: [Operations]
+      operationId: resolveIncident
+      summary: Resolve an incident with a post-incident review note
+      description: Needs `add_notes_evidence` with `full` scope. A review note of substance is required.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [review_note], properties: { review_note: { type: string } } }
+      responses:
+        '200': { description: The resolved incident. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Review note too short. }
 
   /v1/approvals:
     get:

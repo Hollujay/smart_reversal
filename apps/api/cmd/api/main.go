@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/alertparse"
+	"github.com/smartreversal/smartreversal/apps/api/internal/alerts"
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
@@ -25,11 +26,13 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/deadline"
 	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
+	"github.com/smartreversal/smartreversal/apps/api/internal/incidents"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/labels"
 	"github.com/smartreversal/smartreversal/apps/api/internal/observability"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/routing"
 	"github.com/smartreversal/smartreversal/apps/api/internal/rules"
 	"github.com/smartreversal/smartreversal/apps/api/internal/servauth"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
@@ -114,6 +117,8 @@ func run() error {
 		customerLogin = &customer.Login{Provider: &customer.DevProvider{Pool: pool, Audit: appender}, Signer: signer}
 	}
 	reports := &creport.Service{Pool: pool, Config: configService, Cases: caseService, Deadlines: &deadline.Engine{Config: configService}, Parser: &alertparse.RuleParser{OwnNames: cfg.OwnBankNames}}
+	alertService := &alerts.Service{Routing: &routing.Service{Audit: appender}, Config: configService, Audit: appender}
+	incidentService := &incidents.Service{Config: configService, Alerts: alertService, Audit: appender}
 	reversalService := &reversal.Service{Pool: pool, Config: configService, Kill: killService, Cases: caseService, Audit: appender, Txn: txnService,
 		Policy: policy, SoD: authz.SoD{Conflicts: &authz.PGConflictChecker{Pool: pool}},
 		Status: reversal.SimStatus{}, Ledger: reversal.SimLedger{}, Provider: reversal.SimProvider{}}
@@ -128,7 +133,7 @@ func run() error {
 			Signer:   signer,
 			Observer: &identity.AuditLoginObserver{Pool: pool, Appender: appender, Logger: logger},
 		},
-		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, CustomerLogin: customerLogin, Reports: reports, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService},
+		Services:        &server.Services{Pool: pool, Policy: policy, Audit: appender, Vault: vault, Config: configService, KillSwitch: killService, Txn: txnService, Feed: &feed.Importer{Pool: pool, Txn: txnService}, Redis: redisClient, Alerts: alertService, Incidents: incidentService, CustomerLogin: customerLogin, Reports: reports, Rules: &rules.Engine{Store: &rules.Store{Audit: appender}}, Correlate: &correlate.Matcher{Txn: txnService}, Cases: caseService, Reversal: reversalService},
 		ServiceVerifier: &servauth.Verifier{Pool: pool},
 	})
 	return server.Serve(ctx, ln, handler, logger, server.Timeouts{
