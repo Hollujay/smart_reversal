@@ -35,7 +35,7 @@ func (s *Services) metricsCatalogue(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": metrics.Catalogue})
 }
 
-// metricsReport serves GET /v1/metrics?from=&to=. The period defaults to the last seven
+// metricsReport serves GET /v1/metrics/report?from=&to=. The period defaults to the last seven
 // days and may not exceed 366. Values are measured from stored records, are null when
 // there is nothing to measure, and describe synthetic data only. Roles limited to
 // aggregates get the same figures: none of them identifies a person or a case.

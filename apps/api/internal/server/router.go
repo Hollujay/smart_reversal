@@ -132,7 +132,7 @@ func NewRouter(o Options) http.Handler {
 				}
 				if o.Services.Cases != nil {
 					pr.Get("/metrics/catalogue", o.Services.metricsCatalogue)
-					pr.Get("/metrics", o.Services.metricsReport)
+					pr.Get("/metrics/report", o.Services.metricsReport)
 					pr.Get("/labeled-examples", o.Services.listLabeledExamples)
 					pr.Post("/labeled-examples/{id}/decision", o.Services.decideLabeledExample)
 				}

@@ -1605,7 +1605,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /v1/metrics:
+  /v1/metrics/report:
     get:
       tags: [Platform]
       operationId: metricsReport

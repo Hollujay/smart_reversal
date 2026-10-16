@@ -113,7 +113,7 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 
 | Requirement | Class | Evidence |
 |---|---|---|
-| Metrics catalogue and the listed metrics | COMPLETE (PR #31) | `internal/metrics`, `GET /v1/metrics`, `/v1/metrics/catalogue`, plus summary, pipeline and sources |
+| Metrics catalogue and the listed metrics | COMPLETE (PR #31) | `internal/metrics`, `GET /v1/metrics/report`, `/v1/metrics/catalogue`, plus summary, pipeline and sources |
 | Controlled exports | MISSING | |
 | Integration health | PARTIAL | Source freshness and pipeline backlog; per-adapter success rate and circuit state MISSING |
 | OpenTelemetry, metrics endpoint | OPEN IN PR #19 | |

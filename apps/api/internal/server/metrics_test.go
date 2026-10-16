@@ -20,14 +20,14 @@ func TestMetricsAreReadableByAggregateRolesAndTheCatalogueExplainsEachOne(t *tes
 		}
 		return serve(r.handler, newReq("GET", path, "", tok))
 	}
-	if rec := get("/v1/metrics", ""); rec.Code != http.StatusUnauthorized {
+	if rec := get("/v1/metrics/report", ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous: %d", rec.Code)
 	}
-	if rec := get("/v1/metrics", "AGENT"); rec.Code != http.StatusForbidden {
+	if rec := get("/v1/metrics/report", "AGENT"); rec.Code != http.StatusForbidden {
 		t.Fatalf("an agent read metrics: %d", rec.Code)
 	}
 	for _, role := range []string{"EXECUTIVE", "SUPERVISOR", "TXN_ANALYST"} {
-		rec := get("/v1/metrics?from="+time.Now().AddDate(0, 0, -1).UTC().Format(time.RFC3339)+"&to="+time.Now().UTC().Format(time.RFC3339), role)
+		rec := get("/v1/metrics/report?from="+time.Now().AddDate(0, 0, -1).UTC().Format(time.RFC3339)+"&to="+time.Now().UTC().Format(time.RFC3339), role)
 		var rep metrics.Report
 		_ = json.Unmarshal(rec.Body.Bytes(), &rep)
 		if rec.Code != http.StatusOK || !rep.Simulated || len(rep.Metrics) != len(metrics.Catalogue) {
@@ -41,11 +41,11 @@ func TestMetricsAreReadableByAggregateRolesAndTheCatalogueExplainsEachOne(t *tes
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 	for _, q := range []string{"?from=yesterday", "?to=nope", "?from=2026-10-14T00:00:00Z&to=2026-10-13T00:00:00Z", "?from=2024-01-01T00:00:00Z&to=2026-01-01T00:00:00Z"} {
-		if rec := get("/v1/metrics"+q, "SUPERVISOR"); rec.Code != http.StatusBadRequest {
+		if rec := get("/v1/metrics/report"+q, "SUPERVISOR"); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", q, rec.Code)
 		}
 	}
-	if rec := get("/v1/metrics", "SUPERVISOR"); rec.Code != http.StatusOK {
+	if rec := get("/v1/metrics/report", "SUPERVISOR"); rec.Code != http.StatusOK {
 		t.Fatalf("the default period: %d", rec.Code)
 	}
 }
