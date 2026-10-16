@@ -102,8 +102,8 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 
 | Requirement | Class | Evidence |
 |---|---|---|
-| Incident grouping and spike detection | MISSING | |
-| Alert service: routing, dedupe, suppression, acknowledge, escalate | MISSING | Ops message templates are recorded, not routed |
+| Incident grouping and spike detection | COMPLETE (PR #30) | `internal/incidents`; `docs/backend/alerts-and-incidents.md`; needs approved `incident.*` keys |
+| Alert service: routing, dedupe, suppression, acknowledge, escalate | COMPLETE (PR #30) | `internal/alerts`, `/v1/alerts`, worker `opsAll`; needs approved `alert.*` keys |
 | Customer notifications: templates, dedupe, two-stage, never "returned" before VERIFIED | COMPLETE | |
 | Delivery tracking, retry, fallback channel, opt-out, wrong-number guard, contact-change guard | MISSING | Provider adapters OPEN IN PR #19 (telecom) |
 | Customer report received acknowledgement | COMPLETE | `notify.CustomerReportReceived` |
@@ -113,7 +113,7 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 
 | Requirement | Class | Evidence |
 |---|---|---|
-| Metrics catalogue and the listed metrics | PARTIAL | `GET /v1/reports/summary`, `GET /v1/pipeline`, `GET /v1/sources`; no catalogue, no p50 and p95 resolution time, SLA compliance, false-positive rate |
+| Metrics catalogue and the listed metrics | COMPLETE (PR #31) | `internal/metrics`, `GET /v1/metrics`, `/v1/metrics/catalogue`, plus summary, pipeline and sources |
 | Controlled exports | MISSING | |
 | Integration health | PARTIAL | Source freshness and pipeline backlog; per-adapter success rate and circuit state MISSING |
 | OpenTelemetry, metrics endpoint | OPEN IN PR #19 | |
@@ -179,6 +179,10 @@ All items MISSING on develop. PR #19 contains settlement file ingestion and brea
 
 ## Known conflicts and findings
 
-- Migration numbers: develop holds 0001 to 0033. PR #19 adds 0022 and 0023 and must be renumbered after merging develop.
+- Migration numbers: develop holds 0001 to 0035. PR #19 adds 0022 and 0023 and must be renumbered after merging develop.
 - Findings from the simulator under a source outage that are not fixed: a retry judged before the silent source crosses its stale threshold can still be flagged as a duplicate; a confirmed failure from one source is not superseded when another source's delayed confirmation makes the evidence conflict; a failure delivered together with its reversal opens no failure case (`docs/backend/simulator.md`, `docs/backend/source-degradation.md`).
 - The failure-family detectors for ATM, fee, vendor, mismatch and incomplete routing key off rail or channel names, so a USSD or gateway failure is classified as a vendor drop. That is a convention to confirm with the bank.
+
+## Test results at this gate (develop at 2883eff, 16 Oct 2026)
+
+`go test -p 1 -race -count=1 ./...` against local Postgres 16 and Redis: 726 tests passed, 2 failed, 12 packages skipped, 46 passed. The 2 failures were in `internal/authz`: tests written before the `manage_ingestion` capability (migration 0023) did not count its two grants or its MFA flag. Fixed in the test only; `internal/authz` then passed. The full suite was not re-run after that fix. Not run in this pass: demo replay against `sr_demo`.
