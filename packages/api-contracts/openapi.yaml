@@ -23,6 +23,7 @@ tags:
   - name: Platform
   - name: Ingestion
   - name: Detection
+  - name: Customer
   - name: Transactions
   - name: Cases
   - name: Reversals
@@ -1061,6 +1062,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/customer/auth/login:
+    post:
+      tags: [Customer]
+      operationId: customerLogin
+      summary: Sign in a ReverseIt customer (development provider, synthetic customers only)
+      description: |
+        Present only when the development customer sign-in is enabled
+        (`CUSTOMER_DEV_LOGIN_ENABLED`, refused in production). The token has the
+        customer audience and works on no operator route; an operator token works on no
+        customer route. Every failure is the same 401. Repeated failures lock the
+        customer for a time. In production a bank identity provider replaces this
+        behind the same interface.
+      x-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [institution, customer_ref, passphrase], properties: { institution: { type: string }, customer_ref: { type: string, pattern: '^cust_[0-9a-f]{24}$' }, passphrase: { type: string } } }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema: { type: object, required: [access_token, token_type, expires_at, customer_ref, simulated], properties: { access_token: { type: string }, token_type: { type: string }, expires_at: { type: string, format: date-time }, customer_ref: { type: string }, simulated: { type: boolean } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/customer/me:
+    get:
+      tags: [Customer]
+      operationId: customerMe
+      summary: The signed-in customer
+      description: Needs a customer-audience token. A token for a customer who is no longer active is refused.
+      x-status: implemented
+      responses:
+        '200':
+          description: The customer.
+          content:
+            application/json:
+              schema: { type: object, required: [customer_ref, display_name, linked_accounts], properties: { customer_ref: { type: string }, display_name: { type: string }, linked_accounts: { type: integer } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /v1/review-items:
     get:
       tags: [Reversals]

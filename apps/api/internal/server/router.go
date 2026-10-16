@@ -77,6 +77,15 @@ func NewRouter(o Options) http.Handler {
 			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/observations", o.Services.submitObservation)
 		}
 
+		// ReverseIt customer routes: a different token audience from operators.
+		if o.Services.ready() && o.Services.CustomerLogin != nil {
+			v1.Post("/customer/auth/login", o.Services.customerLogin)
+			v1.Route("/customer", func(cr chi.Router) {
+				cr.Use(requireAuth(o.Verifier, identity.AudienceCustomer))
+				cr.Get("/me", o.Services.customerMe)
+			})
+		}
+
 		// Everything below needs a valid operator token. Routes are added only
 		// inside this group, so a new route cannot be public by accident.
 		v1.Group(func(pr chi.Router) {
