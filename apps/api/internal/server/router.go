@@ -103,6 +103,17 @@ func NewRouter(o Options) http.Handler {
 					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
 					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
 				}
+				if o.Services.Rules != nil {
+					pr.Get("/rules", o.Services.listRules)
+					pr.Post("/rules", o.Services.createRule)
+					pr.Get("/rules/{id}", o.Services.getRule)
+					pr.Post("/rules/{id}/rollback", o.Services.rollbackRule)
+					pr.Post("/rules/{id}/disable", o.Services.disableRule)
+					pr.Post("/rules/{id}/versions/{version}/shadow", o.Services.startRuleShadow)
+					pr.Post("/rules/{id}/versions/{version}/backtest", o.Services.backtestRule)
+					pr.Post("/rules/{id}/versions/{version}/activation", o.Services.requestRuleActivation)
+					pr.Post("/rules/{id}/versions/{version}/decision", o.Services.decideRuleActivation)
+				}
 				if o.Services.Correlate != nil {
 					pr.Get("/evidence", o.Services.listEvidence)
 					pr.Post("/evidence/{id}/link", o.Services.linkEvidence)

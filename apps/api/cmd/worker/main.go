@@ -23,6 +23,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/redisx"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
+	"github.com/smartreversal/smartreversal/apps/api/internal/rules"
 	"github.com/smartreversal/smartreversal/apps/api/internal/server"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 	"github.com/smartreversal/smartreversal/apps/api/internal/worker"
@@ -72,7 +73,8 @@ func run() error {
 	app := &audit.Appender{}
 	cfgSvc := &configsvc.Service{Audit: app}
 	killSvc := &killswitch.Service{Audit: app}
-	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc, Kill: killSvc}
+	detector := &detect.Detector{Cases: &cases.Service{Audit: app, Config: cfgSvc}, Config: cfgSvc, Kill: killSvc,
+		Rules: &rules.Engine{Store: &rules.Store{Audit: app}}}
 
 	caseSvc := &cases.Service{Audit: app, Config: cfgSvc}
 	policy, err := authz.Load(ctx, pool)
