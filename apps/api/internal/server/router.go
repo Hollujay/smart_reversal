@@ -48,6 +48,7 @@ func NewRouter(o Options) http.Handler {
 
 	r.Use(observability.TraceMiddleware)
 	r.Use(observability.RequestLogger(o.Logger))
+	r.Use(observability.MetricsMiddleware(observability.DefaultRegistry))
 	r.Use(recoverer(o.Logger))
 
 	service := o.Service
@@ -58,6 +59,7 @@ func NewRouter(o Options) http.Handler {
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health", h.live)
 		v1.Get("/ready", h.ready)
+		v1.Get("/metrics", observability.DefaultRegistry.Handler())
 
 		if o.Auth != nil {
 			ar := &authRoutes{auth: o.Auth, logger: o.Logger}
@@ -157,6 +159,8 @@ func NewRouter(o Options) http.Handler {
 					pr.Post("/cases/{id}/notes", o.Services.addCaseNote)
 					pr.Post("/cases/{id}/evidence", o.Services.addCaseEvidence)
 					pr.Get("/cases/{id}/customer-status", o.Services.customerCaseStatus)
+					pr.Post("/cases/{id}/escalate", o.Services.escalateCase)
+					pr.Post("/cases/sweep-sla", o.Services.sweepSLAs)
 					pr.Post("/complaints", o.Services.submitComplaint)
 				}
 				if o.Services.Reversal != nil && o.Services.Cases != nil {
@@ -164,6 +168,9 @@ func NewRouter(o Options) http.Handler {
 					pr.Get("/reversals/{id}", o.Services.getReversal)
 					pr.Post("/reversals/{id}/advance", o.Services.advanceReversal)
 					pr.Post("/reversals/{id}/reapproval", o.Services.requestReapproval)
+					pr.Post("/reversals/{id}/override-proposal", o.Services.proposeGateOverride)
+					pr.Post("/reversals/overrides/{id}/decision", o.Services.decideGateOverride)
+					pr.Post("/reversals/recover-timeouts", o.Services.recoverTimeouts)
 					pr.Get("/cases/{id}/reversal-eligibility", o.Services.reversalEligibility)
 					pr.Get("/approvals", o.Services.listApprovals)
 					pr.Get("/review-items", o.Services.listReviewItems)

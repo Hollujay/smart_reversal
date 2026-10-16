@@ -565,3 +565,71 @@ func customerLabel(h cases.Event) string {
 	}
 	return ""
 }
+
+type escalateCaseRequest struct {
+	TargetRole string `json:"target_role"`
+	Reason     string `json:"reason"`
+}
+
+// escalateCase serves POST /v1/cases/{id}/escalate.
+func (s *Services) escalateCase(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := s.scopeAtLeast(w, r, "add_notes_evidence", "full")
+	if !ok {
+		return
+	}
+	var req escalateCaseRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, httpx.CodeValidation, "escalation reason is required")
+		return
+	}
+	var out *cases.Case
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		c, err := s.resolveCase(r, tx, p.TenantID, pathParam(r, "id"))
+		if err != nil {
+			return err
+		}
+		out, err = s.Cases.Escalate(r.Context(), tx, p.TenantID, c.ID, actorOf(p), req.TargetRole, req.Reason)
+		return err
+	})
+	if err != nil {
+		writeCaseError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toCaseJSON(*out))
+}
+
+type sweepSLAResponse struct {
+	BreachedCount int        `json:"breached_count"`
+	Cases         []caseJSON `json:"cases"`
+}
+
+// sweepSLAs serves POST /v1/cases/sweep-sla.
+func (s *Services) sweepSLAs(w http.ResponseWriter, r *http.Request) {
+	p, _, ok := s.scopeAtLeast(w, r, "view_exception_queue", "full")
+	if !ok {
+		return
+	}
+	var breached []cases.Case
+	err := s.Pool.WithTenant(r.Context(), p.TenantID, func(tx pgx.Tx) error {
+		var err error
+		breached, err = s.Cases.SweepBreachedSLAs(r.Context(), tx, p.TenantID)
+		return err
+	})
+	if err != nil {
+		writeCaseError(w, r, err)
+		return
+	}
+	items := make([]caseJSON, 0, len(breached))
+	for _, c := range breached {
+		items = append(items, toCaseJSON(c))
+	}
+	httpx.WriteJSON(w, http.StatusOK, sweepSLAResponse{
+		BreachedCount: len(breached),
+		Cases:         items,
+	})
+}
+
