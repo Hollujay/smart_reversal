@@ -278,6 +278,21 @@ func (s *Service) Execute(ctx context.Context, tenant, reversalID uuid.UUID) (Re
 			}
 		}
 
+		// A reversal recorded as automatic carries no approval to fall back on. If
+		// policy now needs a person for it, it waits for one.
+		if rev.ApprovalStatus == "NOT_REQUIRED" && gate.Verdict == PassNeedsApproval {
+			why := gate.ApprovalReason
+			if why == "" {
+				why = "approval required"
+			}
+			if err := s.escalateToApproval(ctx, tx, tenant, rev, sub, actor, why); err != nil {
+				return err
+			}
+			invalidated = true
+			out, err = s.Get(ctx, tx, tenant, rev.ID.String())
+			return err
+		}
+
 		if err := s.unpark(ctx, tx, tenant, rev, actor); err != nil {
 			return err
 		}

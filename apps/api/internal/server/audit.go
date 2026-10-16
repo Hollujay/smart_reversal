@@ -8,19 +8,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/smartreversal/smartreversal/apps/api/internal/audit"
 	"github.com/smartreversal/smartreversal/apps/api/internal/authz"
 	"github.com/smartreversal/smartreversal/apps/api/internal/cases"
 	"github.com/smartreversal/smartreversal/apps/api/internal/configsvc"
+	"github.com/smartreversal/smartreversal/apps/api/internal/correlate"
 	"github.com/smartreversal/smartreversal/apps/api/internal/datashield"
+	"github.com/smartreversal/smartreversal/apps/api/internal/feed"
 	"github.com/smartreversal/smartreversal/apps/api/internal/identity"
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/httpx"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reconciliation"
 	"github.com/smartreversal/smartreversal/apps/api/internal/reversal"
-	"github.com/smartreversal/smartreversal/apps/api/internal/routing"
+	"github.com/smartreversal/smartreversal/apps/api/internal/rules"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
 
@@ -38,6 +41,15 @@ type Services struct {
 	// Txn enables transaction ingestion (needs ServiceVerifier on Options) and the
 	// transaction read routes. Nil leaves them out.
 	Txn *txn.Service
+	// Feed enables POST /v1/feeds/{mapping}/files (needs ServiceVerifier on Options).
+	Feed *feed.Importer
+	// Rules enables the /v1/rules routes. Nil leaves them out.
+	Rules *rules.Engine
+	// Redis, when set, lets GET /v1/pipeline report stream backlog. Nil is allowed:
+	// the report then covers the outbox only.
+	Redis *redis.Client
+	// Correlate enables POST /v1/observations and the evidence routes (needs Txn).
+	Correlate *correlate.Matcher
 	// Cases enables the exception queue and case routes. Nil leaves them out.
 	Cases *cases.Service
 	// Reversal enables the simulated reversal and approval routes (needs Cases).

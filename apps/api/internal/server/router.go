@@ -71,6 +71,14 @@ func NewRouter(o Options) http.Handler {
 			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/events", o.Services.ingestEvent)
 		}
 
+		if o.ServiceVerifier != nil && o.Services.ready() && o.Services.Feed != nil {
+			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/feeds/{mapping}/files", o.Services.importFeedFile)
+		}
+
+		if o.ServiceVerifier != nil && o.Services.ready() && o.Services.Correlate != nil {
+			v1.With(requireService(o.ServiceVerifier, "events:write")).Post("/observations", o.Services.submitObservation)
+		}
+
 		// Everything below needs a valid operator token. Routes are added only
 		// inside this group, so a new route cannot be public by accident.
 		v1.Group(func(pr chi.Router) {
@@ -90,6 +98,28 @@ func NewRouter(o Options) http.Handler {
 				if o.Services.Txn != nil {
 					pr.Get("/transactions", o.Services.listTransactions)
 					pr.Get("/transactions/{id}", o.Services.getTransaction)
+					pr.Get("/pipeline", o.Services.getPipeline)
+					pr.Get("/sources", o.Services.listSources)
+					pr.Put("/sources/{system}/expectation", o.Services.setSourceExpectation)
+					pr.Get("/quarantine", o.Services.listQuarantine)
+					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
+					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
+				}
+				if o.Services.Rules != nil {
+					pr.Get("/rules", o.Services.listRules)
+					pr.Post("/rules", o.Services.createRule)
+					pr.Get("/rules/{id}", o.Services.getRule)
+					pr.Post("/rules/{id}/rollback", o.Services.rollbackRule)
+					pr.Post("/rules/{id}/disable", o.Services.disableRule)
+					pr.Post("/rules/{id}/versions/{version}/shadow", o.Services.startRuleShadow)
+					pr.Post("/rules/{id}/versions/{version}/backtest", o.Services.backtestRule)
+					pr.Post("/rules/{id}/versions/{version}/activation", o.Services.requestRuleActivation)
+					pr.Post("/rules/{id}/versions/{version}/decision", o.Services.decideRuleActivation)
+				}
+				if o.Services.Correlate != nil {
+					pr.Get("/evidence", o.Services.listEvidence)
+					pr.Post("/evidence/{id}/link", o.Services.linkEvidence)
+					pr.Post("/evidence/{id}/discard", o.Services.discardEvidence)
 				}
 				if o.Services.Cases != nil {
 					pr.Get("/exceptions", o.Services.listExceptions)
@@ -112,6 +142,7 @@ func NewRouter(o Options) http.Handler {
 					pr.Post("/reversals/recover-timeouts", o.Services.recoverTimeouts)
 					pr.Get("/cases/{id}/reversal-eligibility", o.Services.reversalEligibility)
 					pr.Get("/approvals", o.Services.listApprovals)
+					pr.Get("/review-items", o.Services.listReviewItems)
 					pr.Post("/approvals/{id}/decision", o.Services.decideApproval)
 					pr.Get("/reconciliation/reversals", o.Services.reconcileReversals)
 					pr.Get("/reports/summary", o.Services.summaryReport)

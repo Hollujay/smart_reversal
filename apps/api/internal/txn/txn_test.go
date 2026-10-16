@@ -41,7 +41,15 @@ func TestAmountIsADecimalStringOfMinorUnits(t *testing.T) {
 	if b, _ := json.Marshal(Amount(42)); string(b) != `"42"` {
 		t.Fatalf("marshal: %s", b)
 	}
-	for _, bad := range []string{`1850000`, `"1850.00"`, `"-5"`, `"+5"`, `"0"`, `"007"`, `""`, `"1e6"`, `" 5"`, `"99999999999999999"`, `"9000000000000001"`, `null`, `true`} {
+	var bare Amount
+	if err := json.Unmarshal([]byte(`1850000`), &bare); err != nil || bare != 1850000 {
+		t.Fatalf("a bare integer, as the event contract shows, must be read exactly: %v %v", bare, err)
+	}
+	var big Amount
+	if err := json.Unmarshal([]byte(`9000000000000000`), &big); err != nil || big != Amount(MaxAmountMinor) {
+		t.Fatalf("a bare integer above 2^53 must stay exact: %v %v", big, err)
+	}
+	for _, bad := range []string{`1850000.5`, `1850000.0`, `1e6`, `+5`, `-5`, `007`, `"1850.00"`, `"-5"`, `"+5"`, `"0"`, `"007"`, `""`, `"1e6"`, `" 5"`, `"99999999999999999"`, `"9000000000000001"`, `null`, `true`} {
 		var x Amount
 		if err := json.Unmarshal([]byte(bad), &x); err == nil {
 			t.Errorf("%s accepted as %d", bad, x)
@@ -395,5 +403,173 @@ func TestInvalidEventsAreQuarantinedNotStored(t *testing.T) {
 	_ = r.pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM quarantined_events WHERE tenant_id = $1), (SELECT count(*) FROM transactions WHERE tenant_id = $1)`, r.tenant).Scan(&q, &txns)
 	if q != 1 || txns != 0 {
 		t.Fatalf("quarantined %d, transactions %d", q, txns)
+	}
+}
+
+// ---- external references ---------------------------------------------------
+
+func (r *rig) refs(t *testing.T, ref string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := r.pool.WithTenant(context.Background(), r.tenant, func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), `SELECT ref_type, ref_value FROM transaction_refs r JOIN transactions t ON t.tenant_id = r.tenant_id AND t.id = r.txn_id WHERE t.instruction_ref = $1`, ref)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				return err
+			}
+			out[k] = v
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestExternalReferencesAreRecordedWithTheTransaction(t *testing.T) {
+	r := newRig(t)
+	e := env("INS-R001", EvDebitPosted, "EV-R1", t0)
+	e.Refs = map[string]string{"RRN": "RRN000000777", "STAN": "000777"}
+	if _, err := r.ingest(t, e); err != nil {
+		t.Fatal(err)
+	}
+	later := env("INS-R001", EvTransferSent, "EV-R2", t0.Add(time.Second))
+	later.Refs = map[string]string{"GATEWAY_REF": "GW-777"}
+	if _, err := r.ingest(t, later); err != nil {
+		t.Fatal(err)
+	}
+	got := r.refs(t, "INS-R001")
+	want := map[string]string{"RRN": "RRN000000777", "STAN": "000777", "GATEWAY_REF": "GW-777", "SESSION_ID": "SESS-INS-R001"}
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	// A repeat adds nothing.
+	if _, err := r.ingest(t, e); err != nil || len(r.refs(t, "INS-R001")) != 4 {
+		t.Fatalf("%v %v", err, r.refs(t, "INS-R001"))
+	}
+}
+
+func TestReferencesAreValidatedAndPartOfTheEventsIdentity(t *testing.T) {
+	good := env("INS-R002", EvDebitPosted, "EV-R3", t0)
+	good.Refs = map[string]string{"RRN": "RRN1"}
+	if err := good.Validate(t0); err != nil {
+		t.Fatal(err)
+	}
+	for name, refs := range map[string]map[string]string{
+		"unknown type": {"PAN": "4111"}, "empty value": {"RRN": ""}, "odd characters": {"RRN": "a b"}, "too long": {"RRN": string(make([]byte, 65))},
+	} {
+		e := good
+		e.Refs = refs
+		if err := e.Validate(t0); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	other := good
+	other.Refs = map[string]string{"RRN": "RRN2"}
+	if good.Hash() == other.Hash() {
+		t.Fatal("different references hashed the same")
+	}
+	none := env("INS-R002", EvDebitPosted, "EV-R3", t0)
+	if none.Hash() == good.Hash() {
+		t.Fatal("an event with references hashed like one without")
+	}
+}
+
+func TestTheSameEventDeliveredConcurrentlyIsStoredOnceAndReportedAsADuplicate(t *testing.T) {
+	r := newRig(t)
+	e := env("INS-R003", EvDebitPosted, "EV-R9", t0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	accepted, dup := 0, 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := r.ingest(t, e)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				t.Error(err)
+			case res.Outcome == Accepted:
+				accepted++
+			default:
+				dup++
+			}
+		}()
+	}
+	wg.Wait()
+	if accepted != 1 || dup != 7 {
+		t.Fatalf("accepted=%d duplicate=%d", accepted, dup)
+	}
+	if _, _, n := r.row(t, "INS-R003"); n != 1 || r.outboxCount(t) != 1 {
+		t.Fatalf("events=%d outbox=%d", n, r.outboxCount(t))
+	}
+}
+
+func TestRefsAreReadAsAListOrAnObjectAndAlwaysWrittenAsASortedList(t *testing.T) {
+	var list, obj Envelope
+	base := `{"source_system":"SWITCH_A","source_event_ref":"EV-R100","event_type":"DEBIT_POSTED","source_ts":"2026-10-15T09:00:00Z","txn":{"instruction_ref":"INS-R100","channel":"MOBILE","rail":"NIP","amount_minor":1850000,"currency":"NGN","debit_account_token":"acct_0123456789abcdef0123456789abcdef"},"refs":`
+	if err := json.Unmarshal([]byte(base+`[{"type":"STAN","value":"000123"},{"type":"RRN","value":"RRN000000123"}]}`), &list); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(base+`{"RRN":"RRN000000123","STAN":"000123"}}`), &obj); err != nil {
+		t.Fatal(err)
+	}
+	if list.Hash() != obj.Hash() {
+		t.Fatal("the same references hashed differently by form")
+	}
+	out, _ := json.Marshal(list)
+	if !strings.Contains(string(out), `"refs":[{"type":"RRN","value":"RRN000000123"},{"type":"STAN","value":"000123"}]`) {
+		t.Fatalf("not a sorted list: %s", out)
+	}
+	for name, doc := range map[string]string{
+		"type given twice": `[{"type":"RRN","value":"A1"},{"type":"RRN","value":"B2"}]`,
+		"unknown key":      `[{"type":"RRN","value":"A1","x":1}]`,
+		"a string":         `"RRN"`,
+		"a number":         `5`,
+	} {
+		var e Envelope
+		if err := json.Unmarshal([]byte(base+doc+`}`), &e); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestOptionalContractFieldsAreValidated(t *testing.T) {
+	good := env("INS-C001", EvDebitPosted, "EV-C001", t0)
+	seq := int64(7)
+	good.Seq, good.InstitutionID, good.RawPayloadHash = &seq, "INST-DEMO-01", "sha256:7c1e0000"
+	if err := good.Validate(t0); err != nil {
+		t.Fatal(err)
+	}
+	neg := int64(-1)
+	for name, mut := range map[string]func(*Envelope){
+		"negative seq":    func(e *Envelope) { e.Seq = &neg },
+		"odd institution": func(e *Envelope) { e.InstitutionID = "a b" },
+		"short raw hash":  func(e *Envelope) { e.RawPayloadHash = "abc" },
+		"odd raw hash":    func(e *Envelope) { e.RawPayloadHash = "sha256:7c1e 0000" },
+	} {
+		e := good
+		mut(&e)
+		if err := e.Validate(t0); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	other := good
+	other.RawPayloadHash = "sha256:aaaa0000"
+	if good.Hash() == other.Hash() {
+		t.Fatal("a different raw payload hash is a different event")
 	}
 }
