@@ -21,6 +21,7 @@ import (
 	"github.com/smartreversal/smartreversal/apps/api/internal/killswitch"
 	"github.com/smartreversal/smartreversal/apps/api/internal/notify"
 	"github.com/smartreversal/smartreversal/apps/api/internal/platform/db"
+	"github.com/smartreversal/smartreversal/apps/api/internal/rules"
 	"github.com/smartreversal/smartreversal/apps/api/internal/stream"
 	"github.com/smartreversal/smartreversal/apps/api/internal/txn"
 )
@@ -55,7 +56,10 @@ type Detector struct {
 	// Reading and storing evidence is never held back. Leaving Kill nil turns
 	// enforcement off, which only tests should do.
 	Kill *killswitch.Service
-	Now  func() time.Time
+	// Rules, when set, adds the institution's declarative detection rules to the
+	// built-in ones. Live rules open cases; shadow rules are only recorded.
+	Rules *rules.Engine
+	Now   func() time.Time
 
 	// beforeAction lets a test change the world between "decide to act" and "act".
 	beforeAction func()
@@ -248,10 +252,88 @@ func (d *Detector) evaluate(ctx context.Context, tx pgx.Tx, tenant, txnID uuid.U
 			return nil, err
 		}
 	}
+	if err := d.applyRules(ctx, tx, tenant, ec, t, ev, add); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// applyRules runs the institution's declarative rules for one transaction. A rule
+// that matches opens a case exactly as a built-in rule would, under the rule's own id
+// and version, so the case says which rule raised it. A case of the same code that a
+// built-in rule already opened for the transaction is not opened again.
+func (d *Detector) applyRules(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow, ev []cases.Evidence, add func(Finding, error) error) error {
+	if d.Rules == nil {
+		return nil
+	}
+	matches, err := d.Rules.Evaluate(ctx, tx, tenant, t.ID)
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		r := m.Rule
+		if err := add(d.openVersion(ctx, tx, tenant, ec, t, r.Code, r.RuleID, fmt.Sprint(r.Version), r.Risk, r.RootCause, r.Explanation, ev)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SweepRules evaluates the declarative rules for transactions that are still waiting
+// for an answer, because a rule about silence needs the clock and not a new event.
+// It looks at the most recently active unresolved transactions first.
+func (d *Detector) SweepRules(ctx context.Context, tx pgx.Tx, tenant uuid.UUID) ([]Finding, error) {
+	if d.Rules == nil {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, txnSelect+` WHERE tenant_id = $1 AND lifecycle_state IN ('DEBITED', 'PENDING', 'UNKNOWN', 'CONFLICTING') ORDER BY last_event_at DESC LIMIT 1000`, tenant)
+	if err != nil {
+		return nil, err
+	}
+	var open []txnRow
+	for rows.Next() {
+		t, err := scanTxn(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		open = append(open, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []Finding
+	for _, t := range open {
+		ev, err := d.evidence(ctx, tx, tenant, t.ID)
+		if err != nil {
+			return nil, err
+		}
+		ec := &run{at: d.now()}
+		add := func(f Finding, err error) error {
+			if err == nil && f.Case.ID != uuid.Nil {
+				out = append(out, f)
+			}
+			return err
+		}
+		if err := d.applyRules(ctx, tx, tenant, ec, t, ev, add); err != nil {
+			return nil, err
+		}
+		if ec.held != nil {
+			if err := automation.Defer(ctx, tx, tenant, automation.KindDetect, t.ID, ec.held); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return out, nil
 }
 
 func (d *Detector) open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow, code, rule, risk, root, why string, ev []cases.Evidence) (Finding, error) {
+	return d.openVersion(ctx, tx, tenant, ec, t, code, rule, RuleVersion, risk, root, why, ev)
+}
+
+// openVersion is open for a rule with its own version.
+func (d *Detector) openVersion(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *run, t txnRow, code, rule, version, risk, root, why string, ev []cases.Evidence) (Finding, error) {
 	if ok, err := d.allowed(ctx, tx, tenant, ec, t.Rail, code, rule); err != nil || !ok {
 		return Finding{}, err
 	}
@@ -262,7 +344,7 @@ func (d *Detector) open(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, ec *ru
 	id := t.ID
 	c, created, err := d.Cases.Open(ctx, tx, tenant, cases.OpenInput{
 		Classification: code, Source: cases.SourceBot, RiskGrade: risk, TxnID: &id, ExposureMinor: &amount, Currency: t.Currency,
-		Rail: t.Rail, RootCause: root, RuleID: rule, RuleVersion: RuleVersion, Explanation: why, Evidence: ev, Actor: cases.System,
+		Rail: t.Rail, RootCause: root, RuleID: rule, RuleVersion: version, Explanation: why, Evidence: ev, Actor: cases.System,
 		At: ec.at,
 	})
 	if err != nil {
@@ -477,6 +559,11 @@ func (d *Detector) SweepAll(ctx context.Context, pool *db.Pool) (int, error) {
 			if err != nil {
 				return err
 			}
+			rf, err := d.SweepRules(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			fs = append(fs, rf...)
 			n := 0
 			for _, f := range fs {
 				if f.Created {
