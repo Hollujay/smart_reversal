@@ -225,6 +225,56 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/sources:
+    get:
+      tags: [Ingestion]
+      operationId: listSources
+      summary: Freshness and clock skew of every source that has sent events
+      description: |
+        Needs the `view_exception_queue` grant with `full` or `metadata` scope. Status
+        is `fresh`, `stale` or `down` against the expectation people set for that
+        source, or `unconfigured` when none is set. An unconfigured source is never
+        reported as fresh. Silence is measured from the last time anything was received.
+        Skew is received time minus the time on the event, over the newest 200 events;
+        it is not meaningful for files imported long after the events happened.
+      x-status: implemented
+      responses:
+        '200':
+          description: One row per source.
+          content:
+            application/json:
+              schema: { type: object, required: [items, as_of], properties: { as_of: { type: string, format: date-time }, items: { type: array, items: { $ref: '#/components/schemas/SourceStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/sources/{system}/expectation:
+    put:
+      tags: [Ingestion]
+      operationId: setSourceExpectation
+      summary: Set how often a source is expected to send, and how much clock skew is tolerable
+      description: |
+        Needs `manage_ingestion` with `full` scope and MFA. Audited. Only for a source
+        that has already sent events. `down_after_secs` must exceed `stale_after_secs`.
+        The values are for people who know the source to set; the platform assumes none.
+      x-status: implemented
+      parameters:
+        - { name: system, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceExpectation' }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceExpectation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/evidence:
     get:
       tags: [Ingestion]
@@ -1609,6 +1659,29 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    SourceExpectation:
+      type: object
+      required: [stale_after_secs, down_after_secs, max_skew_secs]
+      properties:
+        source_system: { type: string }
+        stale_after_secs: { type: integer, minimum: 1 }
+        down_after_secs: { type: integer, maximum: 2592000 }
+        max_skew_secs: { type: integer, minimum: 0, maximum: 86400 }
+    SourceStatus:
+      type: object
+      required: [source_system, status, last_received_at, last_event_at, silence_secs, events, skew_p50_secs, skew_p95_secs, skew_samples, skew_exceeded]
+      properties:
+        source_system: { type: string }
+        status: { type: string, enum: [fresh, stale, down, unconfigured] }
+        expectation: { $ref: '#/components/schemas/SourceExpectation' }
+        last_received_at: { type: string, format: date-time }
+        last_event_at: { type: string, format: date-time }
+        silence_secs: { type: integer }
+        events: { type: integer }
+        skew_p50_secs: { type: number }
+        skew_p95_secs: { type: number }
+        skew_samples: { type: integer }
+        skew_exceeded: { type: boolean }
     Observation:
       type: object
       required: [source_system, source_event_ref, event_type, source_ts, refs, amount_minor, currency]

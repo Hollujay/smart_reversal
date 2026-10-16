@@ -96,6 +96,8 @@ func NewRouter(o Options) http.Handler {
 				if o.Services.Txn != nil {
 					pr.Get("/transactions", o.Services.listTransactions)
 					pr.Get("/transactions/{id}", o.Services.getTransaction)
+					pr.Get("/sources", o.Services.listSources)
+					pr.Put("/sources/{system}/expectation", o.Services.setSourceExpectation)
 					pr.Get("/quarantine", o.Services.listQuarantine)
 					pr.Post("/quarantine/{id}/replay", o.Services.replayQuarantine)
 					pr.Post("/quarantine/{id}/discard", o.Services.discardQuarantine)
