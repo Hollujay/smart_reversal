@@ -306,3 +306,78 @@ func TestAnAtmTransactionNeedsTheCustomerToSayWhoseMachineItWas(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestFeedbackIsRecordedOnceAndADisputeOfAClosedOutcomeReopensTheCaseWithoutTouchingMoney(t *testing.T) {
+	r := newRig(t)
+	r.policies()
+	r.transfer(tokAlice, "NIP202610140912", 2500000, occurred, txn.EvTransferSent, txn.EvCreditFailed)
+	rep := r.confirmed(r.alice, "report-fb-0001", ConfirmInput{AmountMinor: 2500000, OccurredAt: occurred, Reference: "NIP202610140912"})
+	yes := true
+
+	// Feedback before submission is refused.
+	if _, err := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0001", Helpful: &yes}); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("%v", err)
+	}
+	sub, err := r.svc.Submit(context.Background(), r.tenant, r.alice.ID, rep.ID, SubmitInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb, err := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0001", Helpful: &yes, Comment: "Thanks"})
+	if err != nil || fb.Reopened || fb.CaseRef != sub.CaseRef {
+		t.Fatalf("%+v %v", fb, err)
+	}
+	if again, _ := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0001", Helpful: &yes}); !again.Repeat || again.ID != fb.ID {
+		t.Fatalf("%+v", again)
+	}
+
+	// While the case is open a dispute adds a note and reopens nothing.
+	open, err := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0002", DisputesOutcome: true, Comment: "Still not received"})
+	if err != nil || open.Reopened || !strings.Contains(open.Message, "still open") {
+		t.Fatalf("%+v %v", open, err)
+	}
+
+	// Once the case is closed, the same statement reopens it.
+	closeCase := func() {
+		r.in(func(tx pgx.Tx) error {
+			for _, to := range []string{cases.StUnderInvestigation, cases.StClosedNoException} {
+				c, _ := r.cases.Get(context.Background(), tx, r.tenant, sub.CaseID)
+				if c.Status == to || cases.IsTerminal(c.Status) {
+					continue
+				}
+				if _, err := r.cases.Transition(context.Background(), tx, r.tenant, sub.CaseID, cases.System, to, 0, "CHECKED"); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	closeCase()
+	re, err := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0003", DisputesOutcome: true})
+	if err != nil || !re.Reopened || !strings.Contains(re.Message, "reopened") {
+		t.Fatalf("%+v %v", re, err)
+	}
+	var status string
+	_ = r.pool.QueryRow(context.Background(), `SELECT status FROM cases WHERE id = $1`, sub.CaseID).Scan(&status)
+	if status != cases.StReopened {
+		t.Fatalf("case is %s", status)
+	}
+	var reversals int
+	_ = r.pool.QueryRow(context.Background(), `SELECT count(*) FROM reversals WHERE tenant_id = $1`, r.tenant).Scan(&reversals)
+	if reversals != 0 {
+		t.Fatal("feedback created a reversal")
+	}
+
+	// Validation, and another customer cannot give feedback on this report.
+	for name, in := range map[string]FeedbackInput{
+		"short key":    {IdempotencyKey: "k", Helpful: &yes},
+		"nothing said": {IdempotencyKey: "feedback-0004"},
+		"long comment": {IdempotencyKey: "feedback-0005", Comment: strings.Repeat("c", 1001)},
+	} {
+		if _, err := r.svc.Feedback(context.Background(), r.tenant, r.alice.ID, rep.ID, in); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := r.svc.Feedback(context.Background(), r.tenant, r.bob.ID, rep.ID, FeedbackInput{IdempotencyKey: "feedback-0006", Helpful: &yes}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("%v", err)
+	}
+}

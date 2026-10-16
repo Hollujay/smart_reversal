@@ -286,3 +286,47 @@ func (s *Services) submitCustomerComplaint(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, code, out)
 }
+
+type feedbackRequest struct {
+	Helpful         *bool  `json:"helpful"`
+	Comment         string `json:"comment"`
+	DisputesOutcome bool   `json:"disputes_outcome"`
+}
+
+// customerFeedback serves POST /v1/customer/reports/{id}/feedback. Idempotency-Key is
+// required. Saying the value was not received reopens a closed case; it changes no
+// financial fact.
+func (s *Services) customerFeedback(w http.ResponseWriter, r *http.Request) {
+	p, ok := customerFrom(w, r)
+	if !ok {
+		return
+	}
+	id, ok := reportID(w, r)
+	if !ok {
+		return
+	}
+	key, err := httpx.IdempotencyKey(r)
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
+		return
+	}
+	var req feedbackRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReportBody)).Decode(&req); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "the body must be a JSON object with helpful, comment or disputes_outcome")
+		return
+	}
+	out, err := s.Reports.Feedback(r.Context(), p.TenantID, p.UserID, id, creport.FeedbackInput{IdempotencyKey: key, Helpful: req.Helpful, Comment: req.Comment, DisputesOutcome: req.DisputesOutcome})
+	if errors.Is(err, creport.ErrNotReady) {
+		httpx.WriteError(w, r, http.StatusConflict, "NOT_READY", err.Error())
+		return
+	}
+	if err != nil {
+		writeReportError(w, r, err)
+		return
+	}
+	code := http.StatusCreated
+	if out.Repeat {
+		code = http.StatusOK
+	}
+	httpx.WriteJSON(w, code, out)
+}
