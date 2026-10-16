@@ -189,6 +189,83 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/quarantine:
+    get:
+      tags: [Ingestion]
+      operationId: listQuarantine
+      summary: List refused events kept for inspection
+      description: Needs the `manage_ingestion` grant (viewing does not need MFA). `status` is `open` (default), `replayed` or `discarded`.
+      x-status: implemented
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, replayed, discarded] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        '200':
+          description: Quarantined events, oldest first.
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/QuarantinedEvent' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/quarantine/{id}/replay:
+    post:
+      tags: [Ingestion]
+      operationId: replayQuarantine
+      summary: Offer a quarantined event to ingestion again
+      description: |
+        Needs `manage_ingestion` with `full` scope and MFA, and a reason, which is
+        audited with the outcome. The event goes through the same checks as a new
+        one. If it is accepted, or repeats a stored event, it is marked replayed. If
+        it is refused again it stays open with the new reason and nothing is stored.
+        409 already resolved. 422 the row kept no payload; discard it instead.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 500 } } }
+      responses:
+        '200':
+          description: The result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplayResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/quarantine/{id}/discard:
+    post:
+      tags: [Ingestion]
+      operationId: discardQuarantine
+      summary: Mark a quarantined event as not to be replayed
+      description: Same permission as replay. The row is kept with the reason; nothing is deleted.
+      x-status: implemented
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 5, maxLength: 500 } } }
+      responses:
+        '200':
+          description: Discarded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplayResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/transactions:
     get:
       tags: [Transactions]
@@ -1425,6 +1502,28 @@ components:
         txn_id: { type: string, format: uuid }
         lifecycle_state: { type: string }
         duplicate: { type: boolean }
+    QuarantinedEvent:
+      type: object
+      required: [id, source_system, reason, status, attempts, replayable, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_system: { type: string }
+        reason: { type: string }
+        status: { type: string, enum: [open, replayed, discarded] }
+        attempts: { type: integer }
+        replayable: { type: boolean }
+        created_at: { type: string, format: date-time }
+        last_attempt_at: { type: string, format: date-time }
+        last_reason: { type: string }
+    ReplayResult:
+      type: object
+      required: [id, replayed, outcome]
+      properties:
+        id: { type: string, format: uuid }
+        replayed: { type: boolean }
+        outcome: { type: string, enum: [accepted, duplicate, refused_again, discarded] }
+        reason: { type: string }
+        txn_id: { type: string, format: uuid }
     FeedImportResult:
       type: object
       required: [file_id, mapping, mapping_version, status, rows_total, rows_accepted, rows_duplicate, rows_rejected, already_imported]
