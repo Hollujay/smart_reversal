@@ -69,6 +69,9 @@ var Keys = []KeyDef{
 	{regexp.MustCompile(`^deadline\.approaching_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as approaching", false},
 	{regexp.MustCompile(`^deadline\.urgent_percent$`), 1, 99, "percent", "Share of the time to a deadline already used at which a case is shown as urgent", false},
 	{regexp.MustCompile(`^customer_match\.window_seconds$`), 1, 7 * 86400, "seconds", "How far apart in time a customer's reported transaction and a stored one may be and still be offered as a match", false},
+	{regexp.MustCompile(`^alert\.escalate_after_minutes$`), 1, 1440, "minutes", "How long an alert may wait unacknowledged before it is escalated to the next role", false},
+	{regexp.MustCompile(`^alert\.high_value_minor$`), 1, 1 << 52, "minor units", "An unresolved case at or above this amount raises a high-value alert", false},
+	{regexp.MustCompile(`^alert\.high_value_age_minutes$`), 1, 7 * 1440, "minutes", "How long a high-value case may stay unresolved before the alert is raised", false},
 	{regexp.MustCompile(`^customer\.reports_per_hour$`), 1, 1000, "reports", "Most reports one customer may create in an hour, as abuse protection", false},
 	{Pattern: regexp.MustCompile(`^regulatory_clock\.[A-Z0-9_]{3,40}$`), Description: "A regulatory or contractual clock: situation, duration, unit, start event", Clock: true},
 }
