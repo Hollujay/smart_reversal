@@ -134,6 +134,9 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Fatalf("timed out waiting for: %s", what)
 }
 
+// syntheticAccount is a made-up account token, not a credential.
+const syntheticAccount = "acct_0123456789abcdef0123456789abcdef"
+
 func TestWorkerIngestsEventsSourcesWriteToTheInboundStream(t *testing.T) {
 	d := deps(t)
 	ctx := context.Background()
@@ -147,7 +150,7 @@ func TestWorkerIngestsEventsSourcesWriteToTheInboundStream(t *testing.T) {
 	go func() { done <- Run(runCtx, d) }()
 
 	e := txn.Envelope{SourceSystem: "SWITCH_W", SourceEventRef: "EV-W-0001", EventType: txn.EvDebitPosted, SourceTS: time.Now().UTC().Add(-time.Minute),
-		Txn: txn.Core{InstructionRef: "INS-W-0001", Channel: "MOBILE", Rail: "NIP", AmountMinor: 1000, Currency: "NGN", DebitAccountToken: "acct_0123456789abcdef0123456789abcdef"}}
+		Txn: txn.Core{InstructionRef: "INS-W-0001", Channel: "MOBILE", Rail: "NIP", AmountMinor: 1000, Currency: "NGN", DebitAccountToken: syntheticAccount}}
 	entry, err := inbound.Entry(tid, inbound.TypeEvent, e)
 	if err != nil {
 		t.Fatal(err)
