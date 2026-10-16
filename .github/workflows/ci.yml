@@ -100,7 +100,10 @@ jobs:
       # Integration tests share one database, so packages run one at a time.
       # A test that skips for lack of services fails this job instead.
       - name: Run Go Tests with Race Detector
+        shell: bash
         run: |
+          # Without pipefail a failing go test is hidden by tee and the job passes.
+          set -o pipefail
           go test -p 1 -race -count=1 -v ./... | tee test.log
           if grep -q -- '--- SKIP' test.log; then
             echo "A test was skipped; integration services are required in CI" >&2
